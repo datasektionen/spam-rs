@@ -6,6 +6,7 @@ use actix_web::{App, HttpServer, post};
 use actix_web::{HttpResponse, web};
 use aws_config::BehaviorVersion;
 use aws_sdk_sesv2 as sesv2;
+use aws_sdk_sesv2::operation::send_email::builders::SendEmailFluentBuilder;
 use aws_sdk_sesv2::types::builders::AttachmentBuilder;
 use aws_sdk_sesv2::types::{
     Attachment, AttachmentContentTransferEncoding, Body, Content, Destination, EmailContent,
@@ -44,6 +45,26 @@ impl From<EmailTemplateTypeLegacy> for String {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum VerifiedDomains {
+    Metaspexet,
+    Datasektionen,
+    Ddagen,
+}
+
+impl TryFrom<String> for VerifiedDomains {
+    type Error = Error;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        match value.as_str() {
+            "metaspexet.se" => Ok(VerifiedDomains::Metaspexet),
+            "datasektionen.se" => Ok(VerifiedDomains::Datasektionen),
+            "ddagen.se" => Ok(VerifiedDomains::Ddagen),
+            _ => Err(Error::InvalidEmailDomain(value)),
+        }
+    }
+}
+
 #[derive(serde::Serialize, Debug, Clone)]
 struct ContentData {
     is_html: bool,
@@ -70,6 +91,8 @@ struct EmailRequestLegacy {
     #[serde(default)]
     template: EmailTemplateTypeLegacy,
     from: EmailNameLegacy,
+    #[serde(rename = "replyTo")]
+    reply_to: Option<Vec<String>>,
     to: Vec<String>,
     subject: String,
     content: Option<String>,
@@ -83,6 +106,7 @@ struct EmailRequestLegacy {
 #[derive(Debug)]
 enum Error {
     EnvVarMissing(String),
+    InvalidEmailDomain(String),
     ApiKeyInvalid,
     ApiKeyLookup(String),
     EmailSend(String),
@@ -116,6 +140,7 @@ impl Display for Error {
             Error::EnvVarMissing(msg) => write!(f, "Environment variable missing: {}", msg),
             Error::ApiKeyInvalid => write!(f, "API key is invalid or lacks permissions"),
             Error::ApiKeyLookup(msg) => write!(f, "API lookup failed: {}", msg),
+            Error::InvalidEmailDomain(domain) => write!(f, "Invalid email domain: {}", domain),
             Error::EmailSend(msg) => write!(f, "Failed to send email: {}", msg),
             Error::TemplateRender(msg) => write!(f, "Failed to render template: {}", msg),
             Error::TemplateLoad(msg) => write!(f, "Failed to load template: {}", msg),
@@ -134,7 +159,7 @@ impl From<Error> for HttpResponse {
             | Error::TemplateLoad(_)
             | Error::ApiKeyLookup(_)
             | Error::EnvVarMissing(_) => HttpResponse::InternalServerError().body(val.to_string()),
-            Error::Attachment(_) | Error::EmailBody(_) => {
+            Error::Attachment(_) | Error::EmailBody(_) | Error::InvalidEmailDomain(_) => {
                 HttpResponse::BadRequest().body(val.to_string())
             }
         }
@@ -165,6 +190,20 @@ impl Client {
     }
 
     async fn send_email_legacy(&self, mail: EmailRequestLegacy) -> Result<String, Error> {
+        let domain = match mail.from.address.split('@').nth(1) {
+            Some(d) => d,
+            None => {
+                return Err(Error::InvalidEmailDomain(mail.from.address));
+            }
+        };
+
+        match VerifiedDomains::try_from(domain.to_string()) {
+            Ok(_) => {}
+            Err(_) => {
+                return Err(Error::InvalidEmailDomain(domain.to_string()));
+            }
+        };
+
         let cc = mail.cc.as_ref().map(|cc_list| {
             cc_list
                 .iter()
@@ -259,6 +298,7 @@ impl Client {
             .send_email()
             .from_email_address(mail.from.address)
             .destination(dest)
+            .set_reply_to_addresses(mail.reply_to)
             .content(email_content)
             .send()
             .await
