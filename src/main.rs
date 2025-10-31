@@ -7,7 +7,6 @@ use actix_web::{HttpResponse, web};
 use aws_config::BehaviorVersion;
 use aws_sdk_sesv2 as sesv2;
 use aws_sdk_sesv2::types::builders::AttachmentBuilder;
-use aws_sdk_sesv2::types::error::BadRequestException;
 use aws_sdk_sesv2::types::{
     Attachment, AttachmentContentTransferEncoding, Body, Content, Destination, EmailContent,
     Message,
@@ -81,6 +80,67 @@ struct EmailRequestLegacy {
     attachments: Option<Vec<AttachmentLegacy>>,
 }
 
+#[derive(Debug)]
+enum Error {
+    EnvVarMissing(String),
+    ApiKeyInvalid,
+    ApiKeyLookup(String),
+    EmailSend(String),
+    TemplateRender(String),
+    TemplateLoad(String),
+    Attachment(String),
+    EmailBody(String),
+}
+
+impl From<sesv2::Error> for Error {
+    fn from(err: sesv2::Error) -> Self {
+        Error::EmailSend(err.to_string())
+    }
+}
+
+impl From<handlebars::RenderError> for Error {
+    fn from(err: handlebars::RenderError) -> Self {
+        Error::TemplateRender(err.to_string())
+    }
+}
+
+impl From<std::io::Error> for Error {
+    fn from(err: std::io::Error) -> Self {
+        Error::TemplateLoad(err.to_string())
+    }
+}
+
+impl Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Error::EnvVarMissing(msg) => write!(f, "Environment variable missing: {}", msg),
+            Error::ApiKeyInvalid => write!(f, "API key is invalid or lacks permissions"),
+            Error::ApiKeyLookup(msg) => write!(f, "API lookup failed: {}", msg),
+            Error::EmailSend(msg) => write!(f, "Failed to send email: {}", msg),
+            Error::TemplateRender(msg) => write!(f, "Failed to render template: {}", msg),
+            Error::TemplateLoad(msg) => write!(f, "Failed to load template: {}", msg),
+            Error::Attachment(msg) => write!(f, "Failed to process attachment: {}", msg),
+            Error::EmailBody(msg) => write!(f, "Failed to process email body: {}", msg),
+        }
+    }
+}
+
+impl From<Error> for HttpResponse {
+    fn from(val: Error) -> Self {
+        match val {
+            Error::ApiKeyInvalid => HttpResponse::Unauthorized().body(val.to_string()),
+            Error::EmailSend(_)
+            | Error::TemplateRender(_)
+            | Error::TemplateLoad(_)
+            | Error::ApiKeyLookup(_)
+            | Error::EnvVarMissing(_) => HttpResponse::InternalServerError().body(val.to_string()),
+            Error::Attachment(_) | Error::EmailBody(_) => {
+                HttpResponse::BadRequest().body(val.to_string())
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 struct Client {
     inner: sesv2::Client,
@@ -104,7 +164,7 @@ impl Client {
         Self { inner, templates }
     }
 
-    async fn send_email_legacy(&self, mail: EmailRequestLegacy) -> Result<String, sesv2::Error> {
+    async fn send_email_legacy(&self, mail: EmailRequestLegacy) -> Result<String, Error> {
         let cc = mail.cc.as_ref().map(|cc_list| {
             cc_list
                 .iter()
@@ -133,7 +193,7 @@ impl Client {
             .data(mail.subject)
             .charset("UTF-8")
             .build()
-            .unwrap();
+            .map_err(|e| Error::EmailSend(format!("Failed to build subject content: {}", e)))?;
 
         let body_text = if mail.template != EmailTemplateTypeLegacy::None {
             match self.render_template(&mail.template, content.to_string(), is_html) {
@@ -154,21 +214,22 @@ impl Client {
                     .data(body_text)
                     .charset("UTF-8")
                     .build()
-                    .unwrap(),
+                    .map_err(|e| {
+                        Error::EmailBody(format!("Failed to build body content: {}", e))
+                    })?,
             )
             .build();
 
         let attachments: Vec<Attachment> = mail
             .attachments
-            .unwrap()
+            .ok_or_else(|| Error::EmailSend("Attachments are missing".to_string()))?
             .iter()
             .map(|att| {
                 if att.encoding != "base64" {
-                    return Err(sesv2::Error::BadRequestException(
-                        BadRequestException::builder()
-                            .message("Attachment encoding must be base64".to_string())
-                            .build(),
-                    ));
+                    return Err(Error::Attachment(format!(
+                        "Unsupported attachment encoding: {}",
+                        att.encoding
+                    )));
                 }
                 Ok(AttachmentBuilder::default()
                     .raw_content(att.buffer.clone().into_bytes().into())
@@ -176,16 +237,20 @@ impl Client {
                     .content_type(att.mimetype.clone())
                     .content_transfer_encoding(AttachmentContentTransferEncoding::Base64)
                     .build()
-                    .unwrap())
+                    .map_err(|e| {
+                        Error::Attachment(format!(
+                            "Failed to build attachment {}: {}",
+                            att.originalname, e
+                        ))
+                    })?)
             })
-            .collect::<Result<Vec<Attachment>, sesv2::Error>>()?;
+            .collect::<Result<Vec<Attachment>, Error>>()?;
 
         let message = Message::builder()
             .subject(subj)
             .body(body)
             .set_attachments(Some(attachments))
             .build();
-
 
         let email_content = EmailContent::builder().simple(message).build();
 
@@ -196,7 +261,8 @@ impl Client {
             .destination(dest)
             .content(email_content)
             .send()
-            .await?;
+            .await
+            .map_err(|e| Error::EmailSend(format!("Email failed to send: {}", e)))?;
 
         // The response includes a message ID (if accepted)
         let message_id = resp.message_id().map(|s| s.to_string()).unwrap_or_default();
@@ -235,11 +301,7 @@ impl Client {
         } else {
             markdown::to_html(&content)
         };
-        info!("Rendering template {:?} with content: {}", template, content);
-        let data = ContentData {
-            is_html,
-            content,
-        };
+        let data = ContentData { is_html, content };
         let rendered = self.templates.render(&template.to_string(), &data)?;
         info!("Rendered template: {}", rendered);
         Ok(rendered)
@@ -270,29 +332,49 @@ async fn main() -> std::io::Result<()> {
 #[post("/sendmail")]
 async fn send_mail_legacy(ses: web::Data<Client>, body: String) -> HttpResponse {
     let body = serde_json::from_str::<EmailRequestLegacy>(&body)
-        .map_err(|e| HttpResponse::BadRequest().body(format!("Invalid request body: {}", e)));
+        .map_err(|e| Error::EmailBody(format!("Failed to parse email request body: {}", e)));
     let body = match body {
         Ok(b) => b,
-        Err(e) => return e,
+        Err(e) => return HttpResponse::from(e),
     };
 
     let client = reqwest::Client::new();
-    let res = client
-        .get(format!(
-            "{}/token/{}/permission/send",
-            env::var("HIVE_URL").unwrap(),
-            &body.key
-        ))
+    let hive_url = match env::var("HIVE_URL") {
+        Ok(url) => url,
+        Err(e) => {
+            return HttpResponse::from(Error::EnvVarMissing(format!("HIVE_URL missing: {}", e)));
+        }
+    };
+    let res = match client
+        .get(format!("{}/token/{}/permission/send", hive_url, &body.key))
         .bearer_auth(env::var("HIVE_SECRET").unwrap())
         .send()
         .await
         .unwrap()
         .text()
-        .await;
+        .await
+    {
+        Ok(text) => text,
+        Err(e) => {
+            return HttpResponse::from(Error::ApiKeyLookup(format!(
+                "Failed to get API key permission: {}",
+                e
+            )));
+        }
+    };
 
-    let is_auth = res.unwrap().trim().parse::<bool>().unwrap_or(false);
+    let is_auth = match res
+        .trim()
+        .parse::<bool>()
+        .map_err(|e| Error::ApiKeyLookup(format!("Key parse failed: {}", e)))
+    {
+        Ok(val) => val,
+        Err(e) => {
+            return HttpResponse::from(e);
+        }
+    };
     if !is_auth {
-        return HttpResponse::Unauthorized().body("Invalid API key or insufficient permissions.");
+        return HttpResponse::from(Error::ApiKeyInvalid);
     }
 
     if body.html.is_none() && body.content.is_none() {
@@ -307,6 +389,6 @@ async fn send_mail_legacy(ses: web::Data<Client>, body: String) -> HttpResponse 
             "Email sent! Message ID: {}, email request: {:?}",
             message_id, body
         )),
-        Err(e) => HttpResponse::InternalServerError().body(format!("Failed to send email: {}", e)),
+        Err(e) => HttpResponse::from(e),
     }
 }
