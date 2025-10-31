@@ -6,7 +6,6 @@ use actix_web::{App, HttpServer, post};
 use actix_web::{HttpResponse, web};
 use aws_config::BehaviorVersion;
 use aws_sdk_sesv2 as sesv2;
-use aws_sdk_sesv2::operation::send_email::builders::SendEmailFluentBuilder;
 use aws_sdk_sesv2::types::builders::AttachmentBuilder;
 use aws_sdk_sesv2::types::{
     Attachment, AttachmentContentTransferEncoding, Body, Content, Destination, EmailContent,
@@ -92,7 +91,7 @@ struct EmailRequestLegacy {
     template: EmailTemplateTypeLegacy,
     from: EmailNameLegacy,
     #[serde(rename = "replyTo")]
-    reply_to: Option<Vec<String>>,
+    reply_to: Option<String>,
     to: Vec<String>,
     subject: String,
     content: Option<String>,
@@ -298,7 +297,7 @@ impl Client {
             .send_email()
             .from_email_address(mail.from.address)
             .destination(dest)
-            .set_reply_to_addresses(mail.reply_to)
+            .set_reply_to_addresses(mail.reply_to.map(|a| vec![a]))
             .content(email_content)
             .send()
             .await
