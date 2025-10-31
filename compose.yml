@@ -6,6 +6,8 @@ services:
       - 8000:8000
     environment:
       RUST_LOG: debug
+      HOST_ADDRESS: 0.0.0.0
+      PORT: 8000
       AWS_ACCESS_KEY_ID: test
       AWS_SECRET_ACCESS_KEY: test
       AWS_REGION: aws-ses-v2-local
@@ -52,4 +54,3 @@ configs:
           - secret: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa
             permissions:
             - id: send
-

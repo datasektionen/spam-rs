@@ -1,6 +1,7 @@
 use std::fmt::Display;
 
 use actix_cors::Cors;
+use actix_web::http::Method;
 use actix_web::web::scope;
 use actix_web::{App, HttpServer, post};
 use actix_web::{HttpResponse, web};
@@ -352,18 +353,27 @@ async fn main() -> std::io::Result<()> {
     println!("starting");
     env_logger::init();
 
+    let address = env::var("HOST_ADDRESS").unwrap_or_else(|_| "0.0.0.0".to_string());
+    let port = env::var("PORT")
+        .unwrap_or_else(|_| "8000".to_string())
+        .parse::<u16>()
+        .unwrap_or(8000);
+
     let mut client = Client::new().await;
     client.load_templates();
     let client = web::Data::new(client);
 
     HttpServer::new(move || {
-        let cors = Cors::permissive();
+        let cors = Cors::default()
+            .allow_any_header()
+            .allowed_methods([Method::POST])
+            .allow_any_origin();
         App::new()
             .wrap(cors)
             .app_data(client.clone())
             .service(scope("/api").service(scope("/legacy").service(send_mail_legacy)))
     })
-    .bind(("0.0.0.0", 8000))?
+    .bind((address, port))?
     .run()
     .await
 }
