@@ -242,6 +242,8 @@ impl Client {
                     content.to_string()
                 }
             }
+        } else if !is_html {
+            markdown::to_html(content)
         } else {
             content.to_string()
         };
@@ -310,7 +312,7 @@ impl Client {
         Ok(message_id)
     }
 
-    fn load_templates(&mut self) {
+    fn load_templates(&mut self) -> Result<(), Error> {
         let template_files = vec![
             (EmailTemplateTypeLegacy::Default, "default/html.hbs"),
             (EmailTemplateTypeLegacy::Metaspexet, "metaspexet/html.hbs"),
@@ -321,13 +323,23 @@ impl Client {
                 Ok(template_content) => {
                     self.templates
                         .register_template_string(&template_type.to_string(), template_content)
-                        .expect("Failed to register template");
+                        .map_err(|e| {
+                            Error::TemplateLoad(format!(
+                                "Failed to register template {}: {}",
+                                file_name, e
+                            ))
+                        })?;
                 }
                 Err(e) => {
-                    error!("Failed to load template {}: {}", file_name, e);
+                    return Err(Error::TemplateLoad(format!(
+                        "Failed to load template file {}: {}",
+                        file_name, e
+                    )));
                 }
-            }
+            };
         }
+
+        Ok(())
     }
 
     fn render_template(
@@ -360,7 +372,18 @@ async fn main() -> std::io::Result<()> {
         .unwrap_or(8000);
 
     let mut client = Client::new().await;
-    client.load_templates();
+    match client.load_templates() {
+        Ok(_) => {
+            info!("Templates loaded successfully");
+        }
+        Err(e) => {
+            error!("{}", e);
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                e.to_string(),
+            ));
+        }
+    }
     let client = web::Data::new(client);
 
     HttpServer::new(move || {
