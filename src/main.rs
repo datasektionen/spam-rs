@@ -2,6 +2,7 @@ use std::fmt::Display;
 
 use actix_cors::Cors;
 use actix_web::http::{Method, StatusCode};
+use actix_web::middleware::Logger;
 use actix_web::web::scope;
 use actix_web::{App, HttpServer, ResponseError, post};
 use actix_web::{HttpResponse, web};
@@ -416,6 +417,7 @@ async fn main() -> std::io::Result<()> {
             .allow_any_origin();
         App::new()
             .wrap(cors)
+            .wrap(Logger::default())
             .app_data(client.clone())
             .service(scope("/api").service(scope("/legacy").service(send_mail_legacy)))
     })
