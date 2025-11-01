@@ -285,36 +285,38 @@ impl Client {
             )
             .build();
 
-        let attachments: Vec<Attachment> = mail
+        let attachments: Option<Vec<Attachment>> = mail
             .attachments
-            .ok_or_else(|| Error::EmailSend("Attachments are missing".to_string()))?
-            .iter()
-            .map(|att| {
-                if att.encoding != "base64" {
-                    return Err(Error::Attachment(format!(
-                        "Unsupported attachment encoding: {}",
-                        att.encoding
-                    )));
-                }
-                Ok(AttachmentBuilder::default()
-                    .raw_content(att.buffer.clone().into_bytes().into())
-                    .file_name(att.originalname.clone())
-                    .content_type(att.mimetype.clone())
-                    .content_transfer_encoding(AttachmentContentTransferEncoding::Base64)
-                    .build()
-                    .map_err(|e| {
-                        Error::Attachment(format!(
-                            "Failed to build attachment {}: {}",
-                            att.originalname, e
-                        ))
-                    })?)
+            .map(|atts| {
+                atts.iter()
+                    .map(|att| {
+                        if att.encoding != "base64" {
+                            return Err(Error::Attachment(format!(
+                                "Unsupported attachment encoding: {}",
+                                att.encoding
+                            )));
+                        }
+                        AttachmentBuilder::default()
+                            .raw_content(att.buffer.clone().into_bytes().into())
+                            .file_name(att.originalname.clone())
+                            .content_type(att.mimetype.clone())
+                            .content_transfer_encoding(AttachmentContentTransferEncoding::Base64)
+                            .build()
+                            .map_err(|e| {
+                                Error::Attachment(format!(
+                                    "Failed to build attachment {}: {}",
+                                    att.originalname, e
+                                ))
+                            })
+                    })
+                    .collect::<Result<Vec<Attachment>, Error>>()
             })
-            .collect::<Result<Vec<Attachment>, Error>>()?;
+            .transpose()?;
 
         let message = Message::builder()
             .subject(subj)
             .body(body)
-            .set_attachments(Some(attachments))
+            .set_attachments(attachments)
             .build();
 
         let email_content = EmailContent::builder().simple(message).build();
