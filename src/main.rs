@@ -1,9 +1,9 @@
 use std::fmt::Display;
 
 use actix_cors::Cors;
-use actix_web::http::Method;
+use actix_web::http::{Method, StatusCode};
 use actix_web::web::scope;
-use actix_web::{App, HttpServer, post};
+use actix_web::{App, HttpServer, ResponseError, post};
 use actix_web::{HttpResponse, web};
 use aws_config::BehaviorVersion;
 use aws_sdk_sesv2 as sesv2;
@@ -109,6 +109,7 @@ enum Error {
     InvalidEmailDomain(String),
     ApiKeyInvalid,
     ApiKeyLookup(String),
+    MissingContent,
     EmailSend(String),
     TemplateRender(String),
     TemplateLoad(String),
@@ -146,12 +147,13 @@ impl Display for Error {
             Error::TemplateLoad(msg) => write!(f, "Failed to load template: {}", msg),
             Error::Attachment(msg) => write!(f, "Failed to process attachment: {}", msg),
             Error::EmailBody(msg) => write!(f, "Failed to process email body: {}", msg),
+            Error::MissingContent => write!(f, "No 'html' or 'content' field provided."),
         }
     }
 }
 
-impl From<Error> for HttpResponse {
-    fn from(val: Error) -> Self {
+impl From<&Error> for HttpResponse {
+    fn from(val: &Error) -> Self {
         match val {
             Error::ApiKeyInvalid => HttpResponse::Unauthorized().body(val.to_string()),
             Error::EmailSend(_)
@@ -159,9 +161,30 @@ impl From<Error> for HttpResponse {
             | Error::TemplateLoad(_)
             | Error::ApiKeyLookup(_)
             | Error::EnvVarMissing(_) => HttpResponse::InternalServerError().body(val.to_string()),
-            Error::Attachment(_) | Error::EmailBody(_) | Error::InvalidEmailDomain(_) => {
-                HttpResponse::BadRequest().body(val.to_string())
-            }
+            Error::Attachment(_)
+            | Error::EmailBody(_)
+            | Error::InvalidEmailDomain(_)
+            | Error::MissingContent => HttpResponse::BadRequest().body(val.to_string()),
+        }
+    }
+}
+
+impl ResponseError for Error {
+    fn error_response(&self) -> HttpResponse {
+        HttpResponse::from(self)
+    }
+    fn status_code(&self) -> actix_web::http::StatusCode {
+        match self {
+            Error::ApiKeyInvalid => StatusCode::UNAUTHORIZED,
+            Error::EmailSend(_)
+            | Error::TemplateRender(_)
+            | Error::TemplateLoad(_)
+            | Error::ApiKeyLookup(_)
+            | Error::EnvVarMissing(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            Error::Attachment(_)
+            | Error::EmailBody(_)
+            | Error::InvalidEmailDomain(_)
+            | Error::MissingContent => StatusCode::BAD_REQUEST,
         }
     }
 }
@@ -402,65 +425,40 @@ async fn main() -> std::io::Result<()> {
 }
 
 #[post("/sendmail")]
-async fn send_mail_legacy(ses: web::Data<Client>, body: String) -> HttpResponse {
+async fn send_mail_legacy(ses: web::Data<Client>, body: String) -> Result<HttpResponse, Error> {
     let body = serde_json::from_str::<EmailRequestLegacy>(&body)
-        .map_err(|e| Error::EmailBody(format!("Failed to parse email request body: {}", e)));
-    let body = match body {
-        Ok(b) => b,
-        Err(e) => return HttpResponse::from(e),
-    };
+        .map_err(|e| Error::EmailBody(format!("Failed to parse email request body: {}", e)))?;
+
+    let hive_url = env::var("HIVE_URL")
+        .map_err(|e| Error::EnvVarMissing(format!("HIVE_URL missing: {}", e)))?;
 
     let client = reqwest::Client::new();
-    let hive_url = match env::var("HIVE_URL") {
-        Ok(url) => url,
-        Err(e) => {
-            return HttpResponse::from(Error::EnvVarMissing(format!("HIVE_URL missing: {}", e)));
-        }
-    };
-    let res = match client
+    let res = client
         .get(format!("{}/token/{}/permission/send", hive_url, &body.key))
-        .bearer_auth(env::var("HIVE_SECRET").unwrap())
+        .bearer_auth(
+            env::var("HIVE_SECRET").map_err(|_| Error::EnvVarMissing("HIVE_SECRET".to_string()))?,
+        )
         .send()
         .await
-        .unwrap()
+        .map_err(|e| Error::ApiKeyLookup(e.to_string()))?
         .text()
         .await
-    {
-        Ok(text) => text,
-        Err(e) => {
-            return HttpResponse::from(Error::ApiKeyLookup(format!(
-                "Failed to get API key permission: {}",
-                e
-            )));
-        }
-    };
+        .map_err(|e| Error::ApiKeyLookup(e.to_string()))?;
 
-    let is_auth = match res
+    let is_auth = res
         .trim()
         .parse::<bool>()
-        .map_err(|e| Error::ApiKeyLookup(format!("Key parse failed: {}", e)))
-    {
-        Ok(val) => val,
-        Err(e) => {
-            return HttpResponse::from(e);
-        }
-    };
+        .map_err(|e| Error::ApiKeyLookup(format!("Key parse failed: {}", e)))?;
+
     if !is_auth {
-        return HttpResponse::from(Error::ApiKeyInvalid);
+        return Err(Error::ApiKeyInvalid);
     }
 
     if body.html.is_none() && body.content.is_none() {
-        return HttpResponse::BadRequest()
-            .body("Either 'html' or 'content' field must be provided.");
+        return Err(Error::MissingContent);
     }
 
-    let res = ses.send_email_legacy(body.clone()).await;
-
-    match res {
-        Ok(message_id) => HttpResponse::Ok().body(format!(
-            "Email sent! Message ID: {}, email request: {:?}",
-            message_id, body
-        )),
-        Err(e) => HttpResponse::from(e),
-    }
+    ses.send_email_legacy(body.clone())
+        .await
+        .map(|message_id| HttpResponse::Ok().body(format!("{}", message_id)))
 }
