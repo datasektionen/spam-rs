@@ -37,6 +37,7 @@ PORT={{ env "NOMAD_PORT_http" }}
 HIVE_URL=https://hive.datasektionen.se/api/v1
 HOST_ADDRESS=0.0.0.0
 RUST_LOG=info
+AWS_REGION=eu-west-1
 ENV
         destination = "local/.env"
         env         = true
