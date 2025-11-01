@@ -2752,6 +2752,7 @@ dependencies = [
  "actix-web-httpauth",
  "aws-config",
  "aws-sdk-sesv2",
+ "base64 0.22.1",
  "env_logger",
  "handlebars",
  "log",

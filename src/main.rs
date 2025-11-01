@@ -13,6 +13,7 @@ use aws_sdk_sesv2::types::{
     Attachment, AttachmentContentTransferEncoding, Body, Content, Destination, EmailContent,
     Message,
 };
+use base64::prelude::*;
 use log::{error, info};
 use std::path::Path;
 use std::{env, fs};
@@ -296,8 +297,14 @@ impl Client {
                                 att.encoding
                             )));
                         }
+                        let data = BASE64_STANDARD.decode(&att.buffer).map_err(|e| {
+                            Error::Attachment(format!(
+                                "Failed to decode attachment {}: {}",
+                                att.originalname, e
+                            ))
+                        })?;
                         AttachmentBuilder::default()
-                            .raw_content(att.buffer.clone().into_bytes().into())
+                            .raw_content(data.into())
                             .file_name(att.originalname.clone())
                             .content_type(att.mimetype.clone())
                             .content_transfer_encoding(AttachmentContentTransferEncoding::Base64)
