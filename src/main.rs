@@ -80,6 +80,24 @@ struct EmailNameLegacy {
 }
 
 #[derive(serde::Deserialize, Debug, Clone)]
+#[serde(untagged)]
+enum AddressFieldLegacy {
+    Address(String),
+    NameAndAddress(EmailNameLegacy),
+}
+
+impl Display for AddressFieldLegacy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AddressFieldLegacy::Address(addr) => write!(f, "{}", addr),
+            AddressFieldLegacy::NameAndAddress(name_addr) => {
+                write!(f, "{} <{}>", name_addr.name, name_addr.address)
+            }
+        }
+    }
+}
+
+#[derive(serde::Deserialize, Debug, Clone)]
 struct AttachmentLegacy {
     originalname: String,
     mimetype: String,
@@ -92,15 +110,15 @@ struct EmailRequestLegacy {
     key: String,
     #[serde(default)]
     template: EmailTemplateTypeLegacy,
-    from: EmailNameLegacy,
+    from: AddressFieldLegacy,
     #[serde(rename = "replyTo")]
-    reply_to: Option<String>,
-    to: Vec<String>,
+    reply_to: Option<AddressFieldLegacy>,
+    to: Vec<AddressFieldLegacy>,
     subject: String,
     content: Option<String>,
     html: Option<String>,
-    cc: Option<Vec<EmailNameLegacy>>,
-    bcc: Option<Vec<String>>,
+    cc: Option<Vec<AddressFieldLegacy>>,
+    bcc: Option<Vec<AddressFieldLegacy>>,
     #[serde(rename = "attachments[]")]
     attachments: Option<Vec<AttachmentLegacy>>,
 }
@@ -215,12 +233,19 @@ impl Client {
     }
 
     async fn send_email_legacy(&self, mail: EmailRequestLegacy) -> Result<String, Error> {
-        let domain = match mail.from.address.split('@').nth(1) {
+        let from = match &mail.from {
+            AddressFieldLegacy::Address(addr) => addr.clone(),
+            AddressFieldLegacy::NameAndAddress(name_addr) => name_addr.address.clone(),
+        };
+        let domain = match from.split('@').nth(1) {
             Some(d) => d,
             None => {
-                return Err(Error::InvalidEmailDomain(mail.from.address));
+                return Err(Error::InvalidEmailDomain(from.to_string()));
             }
         };
+
+        // After this point, `from` is guaranteed to be a valid email address
+        let from = mail.from.to_string();
 
         match VerifiedDomains::try_from(domain.to_string()) {
             Ok(_) => {}
@@ -232,7 +257,7 @@ impl Client {
         let cc = mail.cc.as_ref().map(|cc_list| {
             cc_list
                 .iter()
-                .map(|cc| cc.address.clone())
+                .map(|cc| cc.to_string())
                 .collect::<Vec<String>>()
         });
 
@@ -245,11 +270,24 @@ impl Client {
         };
         let is_html = mail.html.is_some();
 
+        let to = mail
+            .to
+            .iter()
+            .map(|to| to.to_string())
+            .collect::<Vec<String>>();
+
+        let bcc = mail.bcc.as_ref().map(|bcc_list| {
+            bcc_list
+                .iter()
+                .map(|bcc| bcc.to_string())
+                .collect::<Vec<String>>()
+        });
+
         // Build the destination
         let dest = Destination::builder()
-            .set_to_addresses(Some(mail.to))
+            .set_to_addresses(Some(to))
             .set_cc_addresses(cc)
-            .set_bcc_addresses(mail.bcc)
+            .set_bcc_addresses(bcc)
             .build();
 
         // Build subject content
@@ -327,13 +365,21 @@ impl Client {
             .build();
 
         let email_content = EmailContent::builder().simple(message).build();
+        let reply_to = mail
+            .reply_to
+            .as_ref()
+            .map(|r| match r {
+                AddressFieldLegacy::Address(addr) => addr.clone(),
+                AddressFieldLegacy::NameAndAddress(name_addr) => name_addr.address.clone(),
+            })
+            .map(|addr| vec![addr]);
 
         let resp = self
             .inner
             .send_email()
-            .from_email_address(mail.from.address)
+            .from_email_address(from)
             .destination(dest)
-            .set_reply_to_addresses(mail.reply_to.map(|a| vec![a]))
+            .set_reply_to_addresses(reply_to)
             .content(email_content)
             .send()
             .await
