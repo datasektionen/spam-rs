@@ -14,7 +14,7 @@ A system for sending mail via the datasektionen AWS SES service.
 > This API is deprecated and will be removed in the future.
 > Also, `multipart/form-data` is not supported in the legacy API.
 
-#### `POST /api/sendmail`
+#### `POST /api/legacy/sendmail`
 
 Send an email to one or more recipients. Requests can be sent using
 JSON or form-data. Be sure to set the `Content-Type` header to
