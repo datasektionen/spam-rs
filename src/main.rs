@@ -1,10 +1,8 @@
-use std::fmt::Display;
-
 use actix_cors::Cors;
-use actix_web::http::{Method, StatusCode};
+use actix_web::http::Method;
 use actix_web::middleware::Logger;
 use actix_web::web::scope;
-use actix_web::{App, HttpServer, ResponseError, post};
+use actix_web::{App, HttpServer, post};
 use actix_web::{HttpResponse, web};
 use aws_config::BehaviorVersion;
 use aws_sdk_sesv2 as sesv2;
@@ -18,34 +16,11 @@ use log::{debug, error, info};
 use std::path::Path;
 use std::{env, fs};
 
-#[derive(serde::Deserialize, Debug, Clone, PartialEq, Eq, Hash, Default)]
-#[serde(rename_all = "lowercase")]
-enum EmailTemplateTypeLegacy {
-    #[default]
-    Default,
-    Metaspexet,
-    None,
-}
+mod error;
+mod legacy;
 
-impl Display for EmailTemplateTypeLegacy {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            EmailTemplateTypeLegacy::Default => write!(f, "default"),
-            EmailTemplateTypeLegacy::Metaspexet => write!(f, "metaspexet"),
-            EmailTemplateTypeLegacy::None => write!(f, "none"),
-        }
-    }
-}
-
-impl From<EmailTemplateTypeLegacy> for String {
-    fn from(template: EmailTemplateTypeLegacy) -> Self {
-        match template {
-            EmailTemplateTypeLegacy::Default => "default".to_string(),
-            EmailTemplateTypeLegacy::Metaspexet => "metaspexet".to_string(),
-            EmailTemplateTypeLegacy::None => "none".to_string(),
-        }
-    }
-}
+use error::Error;
+use legacy::email::{AddressFieldLegacy, EmailRequestLegacy, EmailTemplateTypeLegacy};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum VerifiedDomains {
@@ -71,142 +46,6 @@ impl TryFrom<String> for VerifiedDomains {
 struct ContentData {
     is_html: bool,
     content: String,
-}
-
-#[derive(serde::Deserialize, Debug, Clone)]
-struct EmailNameLegacy {
-    name: String,
-    address: String,
-}
-
-#[derive(serde::Deserialize, Debug, Clone)]
-#[serde(untagged)]
-enum AddressFieldLegacy {
-    Address(String),
-    NameAndAddress(EmailNameLegacy),
-}
-
-impl Display for AddressFieldLegacy {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            AddressFieldLegacy::Address(addr) => write!(f, "{}", addr),
-            AddressFieldLegacy::NameAndAddress(name_addr) => {
-                write!(f, "{} <{}>", name_addr.name, name_addr.address)
-            }
-        }
-    }
-}
-
-#[derive(serde::Deserialize, Debug, Clone)]
-struct AttachmentLegacy {
-    originalname: String,
-    mimetype: String,
-    buffer: String,
-    encoding: String,
-}
-
-#[derive(serde::Deserialize, Debug, Clone)]
-struct EmailRequestLegacy {
-    key: String,
-    #[serde(default)]
-    template: EmailTemplateTypeLegacy,
-    from: AddressFieldLegacy,
-    #[serde(rename = "replyTo")]
-    reply_to: Option<AddressFieldLegacy>,
-    to: Option<Vec<AddressFieldLegacy>>,
-    subject: String,
-    content: Option<String>,
-    html: Option<String>,
-    cc: Option<Vec<AddressFieldLegacy>>,
-    bcc: Option<Vec<AddressFieldLegacy>>,
-    #[serde(rename = "attachments[]")]
-    attachments: Option<Vec<AttachmentLegacy>>,
-}
-
-#[derive(Debug)]
-enum Error {
-    EnvVarMissing(String),
-    InvalidEmailDomain(String),
-    ApiKeyInvalid,
-    ApiKeyLookup(String),
-    MissingContent,
-    EmailSend(String),
-    TemplateRender(String),
-    TemplateLoad(String),
-    Attachment(String),
-    EmailBody(String),
-}
-
-impl From<sesv2::Error> for Error {
-    fn from(err: sesv2::Error) -> Self {
-        Error::EmailSend(err.to_string())
-    }
-}
-
-impl From<handlebars::RenderError> for Error {
-    fn from(err: handlebars::RenderError) -> Self {
-        Error::TemplateRender(err.to_string())
-    }
-}
-
-impl From<std::io::Error> for Error {
-    fn from(err: std::io::Error) -> Self {
-        Error::TemplateLoad(err.to_string())
-    }
-}
-
-impl Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Error::EnvVarMissing(msg) => write!(f, "Environment variable missing: {}", msg),
-            Error::ApiKeyInvalid => write!(f, "API key is invalid or lacks permissions"),
-            Error::ApiKeyLookup(msg) => write!(f, "API lookup failed: {}", msg),
-            Error::InvalidEmailDomain(domain) => write!(f, "Invalid email domain: {}", domain),
-            Error::EmailSend(msg) => write!(f, "Failed to send email: {}", msg),
-            Error::TemplateRender(msg) => write!(f, "Failed to render template: {}", msg),
-            Error::TemplateLoad(msg) => write!(f, "Failed to load template: {}", msg),
-            Error::Attachment(msg) => write!(f, "Failed to process attachment: {}", msg),
-            Error::EmailBody(msg) => write!(f, "Failed to process email body: {}", msg),
-            Error::MissingContent => write!(f, "No 'html' or 'content' field provided."),
-        }
-    }
-}
-
-impl From<&Error> for HttpResponse {
-    fn from(val: &Error) -> Self {
-        match val {
-            Error::ApiKeyInvalid => HttpResponse::Unauthorized().body(val.to_string()),
-            Error::EmailSend(_)
-            | Error::TemplateRender(_)
-            | Error::TemplateLoad(_)
-            | Error::ApiKeyLookup(_)
-            | Error::EnvVarMissing(_) => HttpResponse::InternalServerError().body(val.to_string()),
-            Error::Attachment(_)
-            | Error::EmailBody(_)
-            | Error::InvalidEmailDomain(_)
-            | Error::MissingContent => HttpResponse::BadRequest().body(val.to_string()),
-        }
-    }
-}
-
-impl ResponseError for Error {
-    fn error_response(&self) -> HttpResponse {
-        HttpResponse::from(self)
-    }
-    fn status_code(&self) -> actix_web::http::StatusCode {
-        match self {
-            Error::ApiKeyInvalid => StatusCode::UNAUTHORIZED,
-            Error::EmailSend(_)
-            | Error::TemplateRender(_)
-            | Error::TemplateLoad(_)
-            | Error::ApiKeyLookup(_)
-            | Error::EnvVarMissing(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            Error::Attachment(_)
-            | Error::EmailBody(_)
-            | Error::InvalidEmailDomain(_)
-            | Error::MissingContent => StatusCode::BAD_REQUEST,
-        }
-    }
 }
 
 #[derive(Clone, Debug)]
