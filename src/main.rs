@@ -14,7 +14,7 @@ use aws_sdk_sesv2::types::{
     Message,
 };
 use base64::prelude::*;
-use log::{error, info};
+use log::{debug, error, info};
 use std::path::Path;
 use std::{env, fs};
 
@@ -113,7 +113,7 @@ struct EmailRequestLegacy {
     from: AddressFieldLegacy,
     #[serde(rename = "replyTo")]
     reply_to: Option<AddressFieldLegacy>,
-    to: Vec<AddressFieldLegacy>,
+    to: Option<Vec<AddressFieldLegacy>>,
     subject: String,
     content: Option<String>,
     html: Option<String>,
@@ -270,11 +270,12 @@ impl Client {
         };
         let is_html = mail.html.is_some();
 
-        let to = mail
-            .to
-            .iter()
-            .map(|to| to.to_string())
-            .collect::<Vec<String>>();
+        let to: Option<Vec<String>> = mail.to.as_ref().map(|to_list| {
+            to_list
+                .iter()
+                .map(|to| to.to_string())
+                .collect::<Vec<String>>()
+        });
 
         let bcc = mail.bcc.as_ref().map(|bcc_list| {
             bcc_list
@@ -285,7 +286,7 @@ impl Client {
 
         // Build the destination
         let dest = Destination::builder()
-            .set_to_addresses(Some(to))
+            .set_to_addresses(to)
             .set_cc_addresses(cc)
             .set_bcc_addresses(bcc)
             .build();
@@ -329,18 +330,24 @@ impl Client {
             .map(|atts| {
                 atts.iter()
                     .map(|att| {
-                        if att.encoding != "base64" {
-                            return Err(Error::Attachment(format!(
+                        let data = match att.encoding.as_str() {
+                            "base64" | "BASE64" | "Base64" => {
+                                BASE64_STANDARD.decode(&att.buffer).map_err(|e| {
+                                    Error::Attachment(format!(
+                                        "Failed to decode attachment {}: {}",
+                                        att.originalname, e
+                                    ))
+                                })
+                            }
+                            "utf-8" | "utf8" | "UTF-8" | "UTF8" => {
+                                Ok(att.buffer.as_bytes().to_vec())
+                            }
+                            _ => Err(Error::Attachment(format!(
                                 "Unsupported attachment encoding: {}",
                                 att.encoding
-                            )));
-                        }
-                        let data = BASE64_STANDARD.decode(&att.buffer).map_err(|e| {
-                            Error::Attachment(format!(
-                                "Failed to decode attachment {}: {}",
-                                att.originalname, e
-                            ))
-                        })?;
+                            ))),
+                        }?;
+
                         AttachmentBuilder::default()
                             .raw_content(data.into())
                             .file_name(att.originalname.clone())
@@ -368,10 +375,7 @@ impl Client {
         let reply_to = mail
             .reply_to
             .as_ref()
-            .map(|r| match r {
-                AddressFieldLegacy::Address(addr) => addr.clone(),
-                AddressFieldLegacy::NameAndAddress(name_addr) => name_addr.address.clone(),
-            })
+            .map(|r| r.to_string())
             .map(|addr| vec![addr]);
 
         let resp = self
@@ -434,14 +438,13 @@ impl Client {
         };
         let data = ContentData { is_html, content };
         let rendered = self.templates.render(&template.to_string(), &data)?;
-        info!("Rendered template: {}", rendered);
+        debug!("Rendered template: {}", rendered);
         Ok(rendered)
     }
 }
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    println!("starting");
     env_logger::init();
 
     let address = env::var("HOST_ADDRESS").unwrap_or_else(|_| "0.0.0.0".to_string());
@@ -451,20 +454,12 @@ async fn main() -> std::io::Result<()> {
         .unwrap_or(8000);
 
     let mut client = Client::new().await;
-    match client.load_templates() {
-        Ok(_) => {
-            info!("Templates loaded successfully");
-        }
-        Err(e) => {
-            error!("{}", e);
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                e.to_string(),
-            ));
-        }
-    }
+    client
+        .load_templates()
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
     let client = web::Data::new(client);
 
+    info!("Listening on {}:{}", address, port);
     HttpServer::new(move || {
         let cors = Cors::default()
             .allow_any_header()
