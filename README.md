@@ -17,24 +17,22 @@ A system for sending mail via the datasektionen AWS SES service.
 #### `POST /api/legacy/sendmail`
 
 Send an email to one or more recipients. Requests can be sent using
-JSON or form-data. Be sure to set the `Content-Type` header to
-`application/json` or `multipart/form-data` respectively.
+JSON. Be sure to set the `Content-Type` header to
+`application/json`.
 
 The following fields are required:
 
 - `from`: The email address to send the email from. Must be a verified
-  email address.
+  email address, i.e; `@datasektionen.se`, `@metaspexet.se`, `ddagen.se`.
 - `to`: A list of email addresses to send the email to.
 - `subject`: The subject of the email.
 
 Either `content` or `html` must be provided:
 
 - `content`: The plain text content of the email. This gets rendered
-  into HTML using a markdown parser. The parser also accepts HTML, so
-  you can use that directly.
-- `html`: The HTML content of the email. This will first be converted
-  into markdown, and then rendered back into HTML. (sidenote: why do
-  we do this???)
+  into HTML using a markdown parser.
+- `html`: The HTML content of the email. This will **not** be converted
+  from markdown, and will just be sent as HTML.
 
 If both `content` and `html` are provided, `html` will be used.
 
@@ -87,7 +85,7 @@ An example of a valid JSON request:
   "attachments[]": [
     {
       "originalname": "file.txt",
-      "buffer": "Hello World!"
+      "buffer": "Hello World!",
       "mimetype": "text/plain",
       "encoding": "utf8"
     }

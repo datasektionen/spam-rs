@@ -7,6 +7,7 @@ use actix_web::{HttpResponse, ResponseError, http::StatusCode};
 pub enum Error {
     EnvVarMissing(String),
     InvalidEmailDomain(String),
+    InvalidContentType(String),
     ApiKeyInvalid,
     ApiKeyLookup(String),
     MissingContent,
@@ -42,6 +43,7 @@ impl Display for Error {
             Error::ApiKeyInvalid => write!(f, "API key is invalid or lacks permissions"),
             Error::ApiKeyLookup(msg) => write!(f, "API lookup failed: {}", msg),
             Error::InvalidEmailDomain(domain) => write!(f, "Invalid email domain: {}", domain),
+            Error::InvalidContentType(ct) => write!(f, "Invalid content type: {}", ct),
             Error::EmailSend(msg) => write!(f, "Failed to send email: {}", msg),
             Error::TemplateRender(msg) => write!(f, "Failed to render template: {}", msg),
             Error::TemplateLoad(msg) => write!(f, "Failed to load template: {}", msg),
@@ -64,6 +66,7 @@ impl From<&Error> for HttpResponse {
             Error::Attachment(_)
             | Error::EmailBody(_)
             | Error::InvalidEmailDomain(_)
+            | Error::InvalidContentType(_)
             | Error::MissingContent => HttpResponse::BadRequest().body(val.to_string()),
         }
     }
@@ -84,6 +87,7 @@ impl ResponseError for Error {
             Error::Attachment(_)
             | Error::EmailBody(_)
             | Error::InvalidEmailDomain(_)
+            | Error::InvalidContentType(_)
             | Error::MissingContent => StatusCode::BAD_REQUEST,
         }
     }

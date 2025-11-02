@@ -1,5 +1,5 @@
 use actix_cors::Cors;
-use actix_web::http::Method;
+use actix_web::http::{self, Method};
 use actix_web::middleware::Logger;
 use actix_web::web::scope;
 use actix_web::{App, HttpServer, post};
@@ -73,8 +73,8 @@ impl Client {
 
     async fn send_email_legacy(&self, mail: EmailRequestLegacy) -> Result<String, Error> {
         let from = match &mail.from {
-            AddressFieldLegacy::Address(addr) => addr.clone(),
-            AddressFieldLegacy::NameAndAddress(name_addr) => name_addr.address.clone(),
+            AddressFieldLegacy::Address(addr) => addr.to_owned(),
+            AddressFieldLegacy::NameAndAddress(name_addr) => name_addr.address.to_owned(),
         };
         let domain = match from.split('@').nth(1) {
             Some(d) => d,
@@ -174,7 +174,7 @@ impl Client {
                                 BASE64_STANDARD.decode(&att.buffer).map_err(|e| {
                                     Error::Attachment(format!(
                                         "Failed to decode attachment {}: {}",
-                                        att.originalname, e
+                                        att.original_name, e
                                     ))
                                 })
                             }
@@ -189,14 +189,14 @@ impl Client {
 
                         AttachmentBuilder::default()
                             .raw_content(data.into())
-                            .file_name(att.originalname.clone())
-                            .content_type(att.mimetype.clone())
+                            .file_name(att.original_name.to_owned())
+                            .content_type(att.mimetype.to_owned())
                             .content_transfer_encoding(AttachmentContentTransferEncoding::Base64)
                             .build()
                             .map_err(|e| {
                                 Error::Attachment(format!(
                                     "Failed to build attachment {}: {}",
-                                    att.originalname, e
+                                    att.original_name, e
                                 ))
                             })
                     })
@@ -316,7 +316,16 @@ async fn main() -> std::io::Result<()> {
 }
 
 #[post("/sendmail")]
-async fn send_mail_legacy(ses: web::Data<Client>, body: String) -> Result<HttpResponse, Error> {
+async fn send_mail_legacy(
+    ses: web::Data<Client>,
+    content_type: web::Header<http::header::ContentType>,
+    body: String,
+) -> Result<HttpResponse, Error> {
+    match content_type.as_ref() {
+        "application/json" => Ok(()),
+        other => Err(Error::InvalidContentType(other.to_string())),
+    }?;
+
     let body = serde_json::from_str::<EmailRequestLegacy>(&body)
         .map_err(|e| Error::EmailBody(format!("Failed to parse email request body: {}", e)))?;
 
@@ -349,7 +358,7 @@ async fn send_mail_legacy(ses: web::Data<Client>, body: String) -> Result<HttpRe
         return Err(Error::MissingContent);
     }
 
-    ses.send_email_legacy(body.clone())
+    ses.send_email_legacy(body)
         .await
         .map(|message_id| HttpResponse::Ok().body(format!("{}", message_id)))
 }

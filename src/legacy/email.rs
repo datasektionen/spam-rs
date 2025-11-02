@@ -53,11 +53,17 @@ impl Display for AddressFieldLegacy {
     }
 }
 
+fn encoding_default() -> String {
+    "base64".to_string()
+}
+
 #[derive(serde::Deserialize, Debug, Clone)]
 pub struct AttachmentLegacy {
-    pub originalname: String,
+    #[serde(rename = "originalname")]
+    pub original_name: String,
     pub mimetype: String,
     pub buffer: String,
+    #[serde(default = "encoding_default")]
     pub encoding: String,
 }
 
