@@ -46,20 +46,17 @@ The following field are optional:
   currently three templates available:
 
   - `default`: A simple template with a header and footer in the
-    Datasektionen style.
+    Datasektionen style. This is the default if **no template** is
+    specified.
   - `metaspexet`: A similar template but in the style of metaspexet.
   - `none`: A raw template with no styling. Use this if you want to
     provide your own HTML.
 
 - `attachments[]`: Attachments to include in the email. A maximum of 5
-  files can be attached. You can upload files directly when using
-  `multipart/form-data` content type. The files should be sent as a
-  list of files with the key `attachments[]`.
-
-  You can also send already encoded files via JSON.
-  An attachment sent via JSON needs the keys `originalname`,
+  files can be attached. An attachment sent needs the JSON object to include the `originalname`,
   `buffer` (the file contents), and `mimetype`. You can also
-  supply the `encoding` parameter.
+  supply the `encoding` parameter, i.e; `base64` or `utf-8`. If no
+  encoding is provided, `base64` will be used.
 
 An example of a valid JSON request:
 
