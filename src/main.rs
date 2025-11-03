@@ -83,8 +83,9 @@ impl Client {
             }
         };
 
-        // After this point, `from` is guaranteed to be a valid email address
-        let from = mail.from.to_string();
+        // After this point, `from` is guaranteed to be a valid email address,
+        // but not assuredly ASCII
+        let from: String = mail.from.try_into()?;
 
         match VerifiedDomains::try_from(domain.to_string()) {
             Ok(_) => {}
@@ -93,35 +94,44 @@ impl Client {
             }
         };
 
-        let cc = mail.cc.as_ref().map(|cc_list| {
-            cc_list
-                .iter()
-                .map(|cc| cc.to_string())
-                .collect::<Vec<String>>()
-        });
+        let cc = mail
+            .cc
+            .map(|cc_list| {
+                cc_list
+                    .iter()
+                    .map(|cc| cc.try_into())
+                    .collect::<Result<Vec<String>, Error>>()
+            })
+            .transpose()?;
 
         let content = if let Some(html) = &mail.html {
-            html
+            Ok(html)
         } else if let Some(text) = &mail.content {
-            text
+            Ok(text)
         } else {
-            ""
-        };
+            Err(Error::MissingContent)
+        }?;
         let is_html = mail.html.is_some();
 
-        let to: Option<Vec<String>> = mail.to.as_ref().map(|to_list| {
-            to_list
-                .iter()
-                .map(|to| to.to_string())
-                .collect::<Vec<String>>()
-        });
+        let to: Option<Vec<String>> = mail
+            .to
+            .map(|to_list| {
+                to_list
+                    .iter()
+                    .map(|to| to.try_into())
+                    .collect::<Result<Vec<String>, Error>>()
+            })
+            .transpose()?;
 
-        let bcc = mail.bcc.as_ref().map(|bcc_list| {
-            bcc_list
-                .iter()
-                .map(|bcc| bcc.to_string())
-                .collect::<Vec<String>>()
-        });
+        let bcc = mail
+            .bcc
+            .map(|bcc_list| {
+                bcc_list
+                    .iter()
+                    .map(|bcc| bcc.try_into())
+                    .collect::<Result<Vec<String>, Error>>()
+            })
+            .transpose()?;
 
         // Build the destination
         let dest = Destination::builder()
@@ -214,7 +224,8 @@ impl Client {
         let reply_to = mail
             .reply_to
             .as_ref()
-            .map(|r| r.to_string())
+            .map(|r| String::try_from(r))
+            .transpose()?
             .map(|addr| vec![addr]);
 
         let resp = self
@@ -352,10 +363,6 @@ async fn send_mail_legacy(
 
     if !is_auth {
         return Err(Error::ApiKeyInvalid);
-    }
-
-    if body.html.is_none() && body.content.is_none() {
-        return Err(Error::MissingContent);
     }
 
     ses.send_email_legacy(body)

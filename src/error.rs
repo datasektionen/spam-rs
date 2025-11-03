@@ -15,6 +15,7 @@ pub enum Error {
     TemplateRender(String),
     TemplateLoad(String),
     Attachment(String),
+    NotASCII(String),
     EmailBody(String),
 }
 
@@ -49,6 +50,7 @@ impl Display for Error {
             Error::TemplateLoad(msg) => write!(f, "Failed to load template: {}", msg),
             Error::Attachment(msg) => write!(f, "Failed to process attachment: {}", msg),
             Error::EmailBody(msg) => write!(f, "Failed to process email body: {}", msg),
+            Error::NotASCII(field) => write!(f, "Contains non-ASCII characters: {}", field),
             Error::MissingContent => write!(f, "No 'html' or 'content' field provided."),
         }
     }
@@ -67,6 +69,7 @@ impl From<&Error> for HttpResponse {
             | Error::EmailBody(_)
             | Error::InvalidEmailDomain(_)
             | Error::InvalidContentType(_)
+            | Error::NotASCII(_)
             | Error::MissingContent => HttpResponse::BadRequest().body(val.to_string()),
         }
     }
@@ -88,6 +91,7 @@ impl ResponseError for Error {
             | Error::EmailBody(_)
             | Error::InvalidEmailDomain(_)
             | Error::InvalidContentType(_)
+            | Error::NotASCII(_)
             | Error::MissingContent => StatusCode::BAD_REQUEST,
         }
     }

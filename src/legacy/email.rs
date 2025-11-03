@@ -1,5 +1,9 @@
 use std::fmt::Display;
 
+use base64::{Engine, prelude::BASE64_STANDARD};
+
+use crate::error::Error;
+
 #[derive(serde::Deserialize, Debug, Clone, PartialEq, Eq, Hash, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum EmailTemplateTypeLegacy {
@@ -42,12 +46,48 @@ pub enum AddressFieldLegacy {
     NameAndAddress(EmailNameLegacy),
 }
 
-impl Display for AddressFieldLegacy {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            AddressFieldLegacy::Address(addr) => write!(f, "{}", addr),
+impl TryFrom<AddressFieldLegacy> for String {
+    type Error = Error;
+
+    fn try_from(value: AddressFieldLegacy) -> Result<Self, Self::Error> {
+        match value {
+            AddressFieldLegacy::Address(addr) => match addr.is_ascii() {
+                true => Ok(addr.clone()),
+                _ => Err(Error::NotASCII("address field".to_string())),
+            },
             AddressFieldLegacy::NameAndAddress(name_addr) => {
-                write!(f, "{} <{}>", name_addr.name, name_addr.address)
+                let name = if name_addr.name.is_ascii() {
+                    &name_addr.name
+                } else {
+                    &format!("=?UTF-8?B?{}?=", BASE64_STANDARD.encode(&name_addr.name))
+                };
+                if !name_addr.address.is_ascii() {
+                    return Err(Error::NotASCII("address field".to_string()));
+                }
+                Ok(format!("{} <{}>", name, name_addr.address))
+            }
+        }
+    }
+}
+
+impl TryFrom<&AddressFieldLegacy> for String {
+    type Error = Error;
+
+    fn try_from(value: &AddressFieldLegacy) -> Result<Self, Self::Error> {
+        match value {
+            AddressFieldLegacy::Address(addr) => match addr.is_ascii() {
+                true => Ok(addr.to_owned()),
+                _ => Err(Error::NotASCII("address field".to_string())),
+            },
+            AddressFieldLegacy::NameAndAddress(name_addr) => {
+                let name = match name_addr.name.is_ascii() {
+                    true => &name_addr.name,
+                    _ => &format!("=?UTF-8?B?{}?=", BASE64_STANDARD.encode(&name_addr.name)),
+                };
+                if !name_addr.address.is_ascii() {
+                    return Err(Error::NotASCII("address field".to_string()));
+                }
+                Ok(format!("{} <{}>", name, name_addr.address))
             }
         }
     }
