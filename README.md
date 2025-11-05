@@ -90,6 +90,10 @@ An example of a valid JSON request:
 }
 ```
 
+#### `GET /api/legacy/ping`
+
+Returns "I'm alive!" if the server is running.
+
 # Spam
 
 ![spam](http://media.boingboing.net/wp-content/uploads/2016/01/Spam-Can.jpg)

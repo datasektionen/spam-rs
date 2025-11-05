@@ -1,8 +1,8 @@
 use actix_cors::Cors;
-use actix_web::http::{self, Method};
+use actix_web::http::Method;
 use actix_web::middleware::Logger;
 use actix_web::web::scope;
-use actix_web::{App, HttpServer, post};
+use actix_web::{App, HttpServer, get, post};
 use actix_web::{HttpResponse, web};
 use aws_config::BehaviorVersion;
 use aws_sdk_sesv2 as sesv2;
@@ -323,7 +323,9 @@ async fn main() -> std::io::Result<()> {
             .wrap(cors)
             .wrap(Logger::default())
             .app_data(client.clone())
-            .service(scope("/api").service(scope("/legacy").service(send_mail_legacy)))
+            .service(
+                scope("/api").service(scope("/legacy").service(send_mail_legacy).service(ping)),
+            )
     })
     .bind((address, port))?
     .run()
@@ -372,4 +374,9 @@ async fn send_mail_legacy(
     ses.send_email_legacy(body)
         .await
         .map(|message_id| HttpResponse::Ok().body(format!("{}", message_id)))
+}
+
+#[get("/ping")]
+async fn ping() -> HttpResponse {
+    HttpResponse::Ok().body("I'm alive!")
 }
