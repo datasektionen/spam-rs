@@ -76,16 +76,12 @@ impl Client {
             AddressFieldLegacy::Address(addr) => addr.to_owned(),
             AddressFieldLegacy::NameAndAddress(name_addr) => name_addr.address.to_owned(),
         };
-        let domain = match from.split('@').nth(1) {
-            Some(d) => d,
-            None => {
-                return Err(Error::InvalidEmailDomain(from.to_string()));
-            }
-        };
 
-        // After this point, `from` is guaranteed to be a valid email address,
-        // but not assuredly ASCII
-        let from: String = mail.from.try_into()?;
+        let domain = from
+            .trim()
+            .split('@')
+            .last()
+            .ok_or(Error::InvalidEmailDomain("missing domain".to_string()))?;
 
         match VerifiedDomains::try_from(domain.to_string()) {
             Ok(_) => {}
@@ -94,10 +90,15 @@ impl Client {
             }
         };
 
+        // After this point, `from` is guaranteed to be a valid email address,
+        // but not assuredly ASCII
+        let from: String = mail.from.try_into()?;
+
         let cc = mail
             .cc
             .map(|cc_list| {
                 cc_list
+                    .to_list()
                     .iter()
                     .map(|cc| cc.try_into())
                     .collect::<Result<Vec<String>, Error>>()
@@ -111,12 +112,14 @@ impl Client {
         } else {
             Err(Error::MissingContent)
         }?;
+
         let is_html = mail.html.is_some();
 
         let to: Option<Vec<String>> = mail
             .to
             .map(|to_list| {
                 to_list
+                    .to_list()
                     .iter()
                     .map(|to| to.try_into())
                     .collect::<Result<Vec<String>, Error>>()
@@ -127,6 +130,7 @@ impl Client {
             .bcc
             .map(|bcc_list| {
                 bcc_list
+                    .to_list()
                     .iter()
                     .map(|bcc| bcc.try_into())
                     .collect::<Result<Vec<String>, Error>>()
@@ -329,16 +333,16 @@ async fn main() -> std::io::Result<()> {
 #[post("/sendmail")]
 async fn send_mail_legacy(
     ses: web::Data<Client>,
-    content_type: web::Header<http::header::ContentType>,
-    body: String,
+    json: Option<web::Json<EmailRequestLegacy>>,
+    form: Option<web::Form<EmailRequestLegacy>>,
 ) -> Result<HttpResponse, Error> {
-    match content_type.as_ref() {
-        "application/json" => Ok(()),
-        other => Err(Error::InvalidContentType(other.to_string())),
+    let body = if let Some(json) = json {
+        Ok(json.into_inner())
+    } else if let Some(form) = form {
+        Ok(form.into_inner())
+    } else {
+        Err(Error::InvalidContentType)
     }?;
-
-    let body = serde_json::from_str::<EmailRequestLegacy>(&body)
-        .map_err(|e| Error::EmailBody(format!("Failed to parse email request body: {}", e)))?;
 
     let hive_url = env::var("HIVE_URL")
         .map_err(|e| Error::EnvVarMissing(format!("HIVE_URL missing: {}", e)))?;

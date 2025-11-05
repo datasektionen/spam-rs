@@ -108,6 +108,22 @@ pub struct AttachmentLegacy {
 }
 
 #[derive(serde::Deserialize, Debug, Clone)]
+#[serde(untagged)]
+pub enum ListNameLegacy {
+    List(Vec<AddressFieldLegacy>),
+    Name(AddressFieldLegacy),
+}
+
+impl ListNameLegacy {
+    pub fn to_list(self) -> Vec<AddressFieldLegacy> {
+        match self {
+            ListNameLegacy::List(items) => items,
+            ListNameLegacy::Name(it) => vec![it],
+        }
+    }
+}
+
+#[derive(serde::Deserialize, Debug, Clone)]
 pub struct EmailRequestLegacy {
     pub key: String,
     #[serde(default)]
@@ -115,12 +131,12 @@ pub struct EmailRequestLegacy {
     pub from: AddressFieldLegacy,
     #[serde(rename = "replyTo")]
     pub reply_to: Option<AddressFieldLegacy>,
-    pub to: Option<Vec<AddressFieldLegacy>>,
+    pub to: Option<ListNameLegacy>,
     pub subject: String,
     pub content: Option<String>,
     pub html: Option<String>,
-    pub cc: Option<Vec<AddressFieldLegacy>>,
-    pub bcc: Option<Vec<AddressFieldLegacy>>,
+    pub cc: Option<ListNameLegacy>,
+    pub bcc: Option<ListNameLegacy>,
     #[serde(rename = "attachments[]")]
     pub attachments: Option<Vec<AttachmentLegacy>>,
 }
