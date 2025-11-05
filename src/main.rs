@@ -324,7 +324,9 @@ async fn main() -> std::io::Result<()> {
             .wrap(Logger::default())
             .app_data(client.clone())
             .service(
-                scope("/api").service(scope("/legacy").service(send_mail_legacy).service(ping)),
+                scope("/api")
+                    .service(ping)
+                    .service(scope("/legacy").service(send_mail_legacy)),
             )
     })
     .bind((address, port))?
