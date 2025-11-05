@@ -1,23 +1,23 @@
-job "spam-rs" {
+job "spam" {
   type = "service"
 
-  group "spam-rs" {
+  group "spam" {
     network {
       port "http" { }
     }
 
     service {
-      name     = "spam-rs"
+      name     = "spam"
       port     = "http"
       provider = "nomad"
       tags = [
         "traefik.enable=true",
-        "traefik.http.routers.spam-rs.rule=Host(`spam.betasektionen.se`)",
-        "traefik.http.routers.spam-rs.tls.certresolver=default",
+        "traefik.http.routers.spam.rule=Host(`spam.datasektionen.se`)",
+        "traefik.http.routers.spam.tls.certresolver=default",
       ]
     }
 
-    task "spam-rs" {
+    task "spam" {
       driver = "docker"
 
       config {
@@ -27,7 +27,7 @@ job "spam-rs" {
 
       template {
         data        = <<ENV
-{{ with nomadVar "nomad/jobs/spam-rs" }}
+{{ with nomadVar "nomad/jobs/spam" }}
 APP_SECRET={{ .app_secret }}
 HIVE_SECRET={{ .hive_secret }}
 AWS_ACCESS_KEY_ID={{ .aws_key_id }}
