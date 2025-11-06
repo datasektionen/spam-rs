@@ -17,6 +17,7 @@ pub enum Error {
     TemplateLoad(String),
     Attachment(String),
     NotASCII(String),
+    InvalidAddress(String),
     EmailBody(String),
 }
 
@@ -53,6 +54,7 @@ impl Display for Error {
             Error::EmailBody(msg) => write!(f, "Failed to process email body: {}", msg),
             Error::NotASCII(field) => write!(f, "Contains non-ASCII characters: {}", field),
             Error::MissingContent => write!(f, "No 'html' or 'content' field provided."),
+            Error::InvalidAddress(msg) => write!(f, "Invalid address: {}", msg),
         }
     }
 }
@@ -71,7 +73,8 @@ impl From<&Error> for HttpResponse {
             | Error::InvalidEmailDomain(_)
             | Error::InvalidContentType
             | Error::NotASCII(_)
-            | Error::MissingContent => HttpResponse::BadRequest().body(val.to_string()),
+            | Error::MissingContent
+            | Error::InvalidAddress(_) => HttpResponse::BadRequest().body(val.to_string()),
         }
     }
 }
@@ -94,6 +97,7 @@ impl ResponseError for Error {
             | Error::InvalidEmailDomain(_)
             | Error::InvalidContentType
             | Error::NotASCII(_)
+            | Error::InvalidAddress(_)
             | Error::MissingContent => StatusCode::BAD_REQUEST,
         }
     }

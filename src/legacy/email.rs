@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::fmt::{Debug, Display};
 
 use base64::{Engine, prelude::BASE64_STANDARD};
 
@@ -26,10 +26,11 @@ impl Display for EmailTemplateTypeLegacy {
 impl From<EmailTemplateTypeLegacy> for String {
     fn from(template: EmailTemplateTypeLegacy) -> Self {
         match template {
-            EmailTemplateTypeLegacy::Default => "default".to_string(),
-            EmailTemplateTypeLegacy::Metaspexet => "metaspexet".to_string(),
-            EmailTemplateTypeLegacy::None => "none".to_string(),
+            EmailTemplateTypeLegacy::Default => "default",
+            EmailTemplateTypeLegacy::Metaspexet => "metaspexet",
+            EmailTemplateTypeLegacy::None => "none",
         }
+        .to_string()
     }
 }
 
@@ -46,20 +47,41 @@ pub enum AddressFieldLegacy {
     NameAndAddress(EmailNameLegacy),
 }
 
-impl TryFrom<AddressFieldLegacy> for String {
+impl TryFrom<&AddressFieldLegacy> for String {
     type Error = Error;
 
-    fn try_from(value: AddressFieldLegacy) -> Result<Self, Self::Error> {
+    fn try_from(value: &AddressFieldLegacy) -> Result<Self, Self::Error> {
         match value {
             AddressFieldLegacy::Address(addr) => match addr.is_ascii() {
                 true => Ok(addr.clone()),
-                _ => Err(Error::NotASCII("address field".to_string())),
+                _ => {
+                    // if address id form Name <addr>, then we just check that addr is ASCII, rest encoded as UTF-8
+                    Ok(addr
+                        .split(",")
+                        .map(|addr| {
+                            let (name, email) = addr.split_once('<').ok_or_else(|| {
+                                Error::InvalidAddress("not in Name <addr> format".to_string())
+                            })?;
+
+                            let email = email.trim_end_matches('>');
+
+                            if !email.is_ascii() {
+                                return Err(Error::InvalidAddress(
+                                    "address is not ASCII".to_string(),
+                                ));
+                            }
+
+                            Ok(format!("{} <{}>", format_utf8(name), email))
+                        })
+                        .collect::<Result<Vec<_>, _>>()?
+                        .join(", "))
+                }
             },
             AddressFieldLegacy::NameAndAddress(name_addr) => {
                 let name = if name_addr.name.is_ascii() {
                     &name_addr.name
                 } else {
-                    &format!("=?UTF-8?B?{}?=", BASE64_STANDARD.encode(&name_addr.name))
+                    &format_utf8(&name_addr.name)
                 };
                 if !name_addr.address.is_ascii() {
                     return Err(Error::NotASCII("address field".to_string()));
@@ -70,27 +92,15 @@ impl TryFrom<AddressFieldLegacy> for String {
     }
 }
 
-impl TryFrom<&AddressFieldLegacy> for String {
+impl TryFrom<AddressFieldLegacy> for String {
     type Error = Error;
-
-    fn try_from(value: &AddressFieldLegacy) -> Result<Self, Self::Error> {
-        match value {
-            AddressFieldLegacy::Address(addr) => match addr.is_ascii() {
-                true => Ok(addr.to_owned()),
-                _ => Err(Error::NotASCII("address field".to_string())),
-            },
-            AddressFieldLegacy::NameAndAddress(name_addr) => {
-                let name = match name_addr.name.is_ascii() {
-                    true => &name_addr.name,
-                    _ => &format!("=?UTF-8?B?{}?=", BASE64_STANDARD.encode(&name_addr.name)),
-                };
-                if !name_addr.address.is_ascii() {
-                    return Err(Error::NotASCII("address field".to_string()));
-                }
-                Ok(format!("{} <{}>", name, name_addr.address))
-            }
-        }
+    fn try_from(value: AddressFieldLegacy) -> Result<Self, Self::Error> {
+        (&value).try_into()
     }
+}
+
+fn format_utf8(name: &str) -> String {
+    format!("=?UTF-8?B?{}?=", BASE64_STANDARD.encode(name.trim()))
 }
 
 fn encoding_default() -> String {
@@ -114,16 +124,26 @@ pub enum ListNameLegacy {
     Name(AddressFieldLegacy),
 }
 
-impl ListNameLegacy {
-    pub fn to_list(self) -> Vec<AddressFieldLegacy> {
-        match self {
-            ListNameLegacy::List(items) => items,
-            ListNameLegacy::Name(it) => vec![it],
+impl TryFrom<&ListNameLegacy> for Vec<String> {
+    type Error = Error;
+
+    fn try_from(value: &ListNameLegacy) -> Result<Self, Self::Error> {
+        match value {
+            ListNameLegacy::Name(addr) => Ok(vec![addr.try_into()?]),
+            ListNameLegacy::List(list) => list.into_iter().map(|a| a.try_into()).collect(),
         }
     }
 }
 
-#[derive(serde::Deserialize, Debug, Clone)]
+impl TryFrom<ListNameLegacy> for Vec<String> {
+    type Error = Error;
+
+    fn try_from(value: ListNameLegacy) -> Result<Self, Self::Error> {
+        (&value).try_into()
+    }
+}
+
+#[derive(serde::Deserialize, Clone)]
 pub struct EmailRequestLegacy {
     pub key: String,
     #[serde(default)]
@@ -139,4 +159,241 @@ pub struct EmailRequestLegacy {
     pub bcc: Option<ListNameLegacy>,
     #[serde(rename = "attachments[]")]
     pub attachments: Option<Vec<AttachmentLegacy>>,
+}
+
+impl Debug for EmailRequestLegacy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EmailRequestLegacy")
+            .field("key", &"<hidden>")
+            .field("template", &self.template)
+            .field("from", &self.from)
+            .field("reply_to", &self.reply_to)
+            .field("to", &self.to)
+            .field("subject", &self.subject)
+            .field("content", &self.content)
+            .field("html", &self.html)
+            .field("cc", &self.cc)
+            .field("bcc", &self.bcc)
+            .field("attachments", &self.attachments)
+            .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn with_html() {
+        let json = r#"{
+            "key": "mykey123",
+            "from": "sender@datasektionen.se",
+            "subject": "Hello World",
+            "html": "<p>Test email</p>"
+        }"#;
+        let req: EmailRequestLegacy = serde_json::from_str(json).unwrap();
+        assert_eq!(req.key, "mykey123");
+        assert_eq!(req.subject, "Hello World");
+        assert_eq!(req.html.unwrap(), "<p>Test email</p>");
+        assert_eq!(req.template, EmailTemplateTypeLegacy::Default);
+    }
+
+    #[test]
+    fn with_content() {
+        let json = r#"{
+            "key": "mykey123",
+            "from": "sender@datasektionen.se",
+            "subject": "Hello World",
+            "content": "This is plain text"
+        }"#;
+        let req: EmailRequestLegacy = serde_json::from_str(json).unwrap();
+        assert_eq!(req.content.unwrap(), "This is plain text");
+        assert!(req.html.is_none());
+    }
+
+    #[test]
+    fn valid_sender() {
+        let json = r#"{
+            "key": "mykey123",
+            "from": {"name": "John Doe", "address": "john@datasektionen.se"},
+            "subject": "Hello",
+            "html": "<p>Test</p>"
+        }"#;
+        let req: EmailRequestLegacy = serde_json::from_str(json).unwrap();
+        match &req.from {
+            AddressFieldLegacy::NameAndAddress(na) => {
+                assert_eq!(na.name, "John Doe");
+                assert_eq!(na.address, "john@datasektionen.se");
+            }
+            _ => panic!("Expected NameAndAddress"),
+        }
+    }
+
+    #[test]
+    fn valid_recipient() {
+        let json = r#"{
+            "key": "mykey123",
+            "from": "sender@datasektionen.se",
+            "to": "recipient@datasektionen.se",
+            "subject": "Hello",
+            "html": "<p>Test</p>"
+        }"#;
+        let req: EmailRequestLegacy = serde_json::from_str(json).unwrap();
+        assert!(req.to.is_some());
+    }
+
+    #[test]
+    fn valid_recipients() {
+        let json = r#"{
+            "key": "mykey123",
+            "from": "sender@datasektionen.se",
+            "to": ["recipient1@datasektionen.se", "recipient2@datasektionen.se"],
+            "subject": "Hello",
+            "html": "<p>Test</p>"
+        }"#;
+        let req: EmailRequestLegacy = serde_json::from_str(json).unwrap();
+        let recipients: Vec<String> = req.to.unwrap().try_into().unwrap();
+        assert_eq!(recipients.len(), 2);
+    }
+
+    #[test]
+    fn valid_cc_and_bcc() {
+        let json = r#"{
+            "key": "mykey123",
+            "from": "sender@datasektionen.se",
+            "to": "recipient@datasektionen.se",
+            "cc": ["cc@datasektionen.se"],
+            "bcc": ["bcc1@datasektionen.se", "Bcc <bcc2@datasektionen.se>"],
+            "subject": "Hello",
+            "html": "<p>Test</p>"
+        }"#;
+        let req: EmailRequestLegacy = serde_json::from_str(json).unwrap();
+        assert!(req.cc.is_some());
+        assert!(req.bcc.is_some());
+        let bcc: Vec<String> = req.bcc.unwrap().try_into().unwrap();
+        assert_eq!(bcc.len(), 2)
+    }
+
+    #[test]
+    fn valid_reply_to() {
+        let json = r#"{
+            "key": "mykey123",
+            "from": "sender@datasektionen.se",
+            "replyTo": "reply@datasektionen.se",
+            "subject": "Hello",
+            "html": "<p>Test</p>"
+        }"#;
+        let req: EmailRequestLegacy = serde_json::from_str(json).unwrap();
+        assert!(req.reply_to.is_some());
+    }
+
+    #[test]
+    fn valid_template() {
+        let json = r#"{
+            "key": "mykey123",
+            "from": "sender@datasektionen.se",
+            "template": "metaspexet",
+            "subject": "Hello",
+            "html": "<p>Test</p>"
+        }"#;
+        let req: EmailRequestLegacy = serde_json::from_str(json).unwrap();
+        assert_eq!(req.template, EmailTemplateTypeLegacy::Metaspexet);
+    }
+
+    #[test]
+    fn valid_attachments() {
+        let json = r#"{
+            "key": "mykey123",
+            "from": "sender@datasektionen.se",
+            "subject": "With attachment",
+            "html": "<p>See attachment</p>",
+            "attachments[]": [
+                {
+                    "originalname": "document.pdf",
+                    "mimetype": "application/pdf",
+                    "buffer": "JVBERi0xLjQ="
+                }
+            ]
+        }"#;
+        let req: EmailRequestLegacy = serde_json::from_str(json).unwrap();
+        assert!(req.attachments.is_some());
+        let attachments = req.attachments.unwrap();
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments[0].original_name, "document.pdf");
+    }
+
+    #[test]
+    fn valid_empty_attachments() {
+        let json = r#"{
+            "key": "mykey123",
+            "from": "sender@datasektionen.se",
+            "subject": "No attachments",
+            "attachments[]": []
+        }"#;
+        let req: EmailRequestLegacy = serde_json::from_str(json).unwrap();
+        let attachments = req.attachments.unwrap();
+        assert_eq!(attachments.len(), 0);
+    }
+
+    #[test]
+    fn valid_string_addresses() {
+        let json = r#"{
+            "key": "mykey123",
+            "from": "sender@datasektionen.se",
+            "to": "recipient@datasektionen.se, test <other@datasektionen.se>",
+            "subject": "Multiple recipients"
+        }"#;
+        let req: EmailRequestLegacy = serde_json::from_str(json).unwrap();
+        let to: Vec<String> = req.to.unwrap().try_into().unwrap();
+        let formatted = to.join(",");
+        assert_eq!(
+            formatted,
+            "recipient@datasektionen.se, test <other@datasektionen.se>"
+        )
+    }
+
+    #[test]
+    fn valid_fancy_address() {
+        let json = r#"{
+            "key": "mykey123",
+            "from": "Test <sender@datasektionen.se>",
+            "to": ["Test <recipient@datasektionen.se>", "Other <other@datasektionen.se>"],
+            "subject": "Multiple recipients"
+        }"#;
+        let req: EmailRequestLegacy = serde_json::from_str(json).unwrap();
+        let to: Vec<String> = req.to.unwrap().try_into().unwrap();
+        assert_eq!(to.len(), 2);
+    }
+
+    #[test]
+    fn valid_utf8_address() {
+        let json = r#"{
+            "key": "mykey123",
+            "from": {"name": "åäö", "address": "sender@datasektionen.se"},
+            "subject": "Hello"
+        }"#;
+        let req: EmailRequestLegacy = serde_json::from_str(json).unwrap();
+        let from: String = req.from.try_into().unwrap();
+        assert_eq!(from, "=?UTF-8?B?w6XDpMO2?= <sender@datasektionen.se>");
+    }
+
+    #[test]
+    fn valid_utf8_fancy_address() {
+        let json = r#"{
+            "key": "mykey123",
+            "from": "åäö <sender@datasektionen.se>",
+            "to": "åäö <recipient@datasektionen.se>, åäö <other@datasektionen.se>",
+            "subject": "Hello"
+        }"#;
+        let req: EmailRequestLegacy = serde_json::from_str(json).unwrap();
+        let from: String = req.from.try_into().unwrap();
+        assert_eq!(from, "=?UTF-8?B?w6XDpMO2?= <sender@datasektionen.se>");
+
+        let to: Vec<String> = req.to.unwrap().try_into().unwrap();
+        let formatted = to.join(",");
+        assert_eq!(
+            formatted,
+            "=?UTF-8?B?w6XDpMO2?= <recipient@datasektionen.se>, =?UTF-8?B?w6XDpMO2?= <other@datasektionen.se>"
+        );
+    }
 }
