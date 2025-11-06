@@ -1,8 +1,6 @@
 use std::fmt::{Debug, Display};
 
 use base64::{Engine, prelude::BASE64_STANDARD};
-use serde::{Deserialize, Deserializer};
-use serde_json::Value;
 
 use crate::error::Error;
 
@@ -42,40 +40,11 @@ pub struct EmailNameLegacy {
     pub address: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(serde::Deserialize, Debug, Clone)]
+#[serde(untagged)]
 pub enum AddressFieldLegacy {
     Address(String),
     NameAndAddress(EmailNameLegacy),
-}
-
-impl<'de> Deserialize<'de> for AddressFieldLegacy {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = Value::deserialize(deserializer)?;
-
-        match value {
-            Value::String(s) => Ok(AddressFieldLegacy::Address(s)),
-            Value::Object(obj) => {
-                let name = obj
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| serde::de::Error::missing_field("name"))?
-                    .to_string();
-                let address = obj
-                    .get("address")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| serde::de::Error::missing_field("address"))?
-                    .to_string();
-                Ok(AddressFieldLegacy::NameAndAddress(EmailNameLegacy {
-                    name,
-                    address,
-                }))
-            }
-            _ => Err(serde::de::Error::custom("expected string or object")),
-        }
-    }
 }
 
 impl TryFrom<&AddressFieldLegacy> for String {
@@ -87,24 +56,25 @@ impl TryFrom<&AddressFieldLegacy> for String {
                 true => Ok(addr.clone()),
                 _ => {
                     // if address id form Name <addr>, then we just check that addr is ASCII, rest encoded as UTF-8
-                    if addr.contains('<') {
-                        let (name, addr) = addr
-                            .split_once('<')
-                            .ok_or(Error::InvalidAddress("".to_string()))?;
+                    Ok(addr
+                        .split(",")
+                        .map(|addr| {
+                            let (name, email) = addr.split_once('<').ok_or_else(|| {
+                                Error::InvalidAddress("not in Name <addr> format".to_string())
+                            })?;
 
-                        match addr.is_ascii() {
-                            true => Ok(format!(
-                                "{} <{}>",
-                                format_utf8(name),
-                                addr.trim_end_matches('>')
-                            )),
-                            _ => Err(Error::InvalidAddress("address is not ASCII".to_string())),
-                        }
-                    } else {
-                        return Err(Error::InvalidAddress(
-                            "is not ASCII and is not in Name <addr> format".to_string(),
-                        ));
-                    }
+                            let email = email.trim_end_matches('>');
+
+                            if !email.is_ascii() {
+                                return Err(Error::InvalidAddress(
+                                    "address is not ASCII".to_string(),
+                                ));
+                            }
+
+                            Ok(format!("{} <{}>", format_utf8(name), email))
+                        })
+                        .collect::<Result<Vec<_>, _>>()?
+                        .join(", "))
                 }
             },
             AddressFieldLegacy::NameAndAddress(name_addr) => {
@@ -122,10 +92,6 @@ impl TryFrom<&AddressFieldLegacy> for String {
     }
 }
 
-fn format_utf8(name: &str) -> String {
-    format!("=?UTF-8?B?{}?=", BASE64_STANDARD.encode(name.trim()))
-}
-
 impl TryFrom<AddressFieldLegacy> for String {
     type Error = Error;
     fn try_from(value: AddressFieldLegacy) -> Result<Self, Self::Error> {
@@ -133,74 +99,8 @@ impl TryFrom<AddressFieldLegacy> for String {
     }
 }
 
-#[derive(Debug, Clone)]
-pub enum AddressFieldsLegacy {
-    AddressField(AddressFieldLegacy),
-    AddressList(Vec<AddressFieldLegacy>),
-}
-
-impl<'de> Deserialize<'de> for AddressFieldsLegacy {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = Value::deserialize(deserializer)?;
-
-        match value {
-            // String could be a single address OR comma-separated list
-            Value::String(s) => {
-                if s.contains(',') {
-                    let addresses = s
-                        .split(",")
-                        .map(|s| AddressFieldLegacy::Address(s.trim().to_string()))
-                        .collect();
-                    Ok(Self::AddressList(addresses))
-                } else {
-                    Ok(AddressFieldsLegacy::AddressField(
-                        AddressFieldLegacy::Address(s),
-                    ))
-                }
-            }
-            // Single address object
-            Value::Object(_) => {
-                let addr =
-                    AddressFieldLegacy::deserialize(value).map_err(serde::de::Error::custom)?;
-                Ok(AddressFieldsLegacy::AddressField(addr))
-            }
-            // Array of addresses
-            Value::Array(arr) => {
-                let addresses: Result<Vec<AddressFieldLegacy>, _> = arr
-                    .into_iter()
-                    .map(|v| AddressFieldLegacy::deserialize(v).map_err(serde::de::Error::custom))
-                    .collect();
-                Ok(AddressFieldsLegacy::AddressList(addresses?))
-            }
-            _ => Err(serde::de::Error::custom(
-                "expected string, object, or array",
-            )),
-        }
-    }
-}
-
-impl TryFrom<&AddressFieldsLegacy> for Vec<String> {
-    type Error = Error;
-
-    fn try_from(value: &AddressFieldsLegacy) -> Result<Self, Self::Error> {
-        match value {
-            AddressFieldsLegacy::AddressField(addr) => Ok(vec![addr.try_into()?]),
-            AddressFieldsLegacy::AddressList(list) => {
-                list.into_iter().map(|a| a.try_into()).collect()
-            }
-        }
-    }
-}
-
-impl TryFrom<AddressFieldsLegacy> for Vec<String> {
-    type Error = Error;
-
-    fn try_from(value: AddressFieldsLegacy) -> Result<Self, Self::Error> {
-        (&value).try_into()
-    }
+fn format_utf8(name: &str) -> String {
+    format!("=?UTF-8?B?{}?=", BASE64_STANDARD.encode(name.trim()))
 }
 
 fn encoding_default() -> String {
@@ -217,6 +117,32 @@ pub struct AttachmentLegacy {
     pub encoding: String,
 }
 
+#[derive(serde::Deserialize, Debug, Clone)]
+#[serde(untagged)]
+pub enum ListNameLegacy {
+    List(Vec<AddressFieldLegacy>),
+    Name(AddressFieldLegacy),
+}
+
+impl TryFrom<&ListNameLegacy> for Vec<String> {
+    type Error = Error;
+
+    fn try_from(value: &ListNameLegacy) -> Result<Self, Self::Error> {
+        match value {
+            ListNameLegacy::Name(addr) => Ok(vec![addr.try_into()?]),
+            ListNameLegacy::List(list) => list.into_iter().map(|a| a.try_into()).collect(),
+        }
+    }
+}
+
+impl TryFrom<ListNameLegacy> for Vec<String> {
+    type Error = Error;
+
+    fn try_from(value: ListNameLegacy) -> Result<Self, Self::Error> {
+        (&value).try_into()
+    }
+}
+
 #[derive(serde::Deserialize, Clone)]
 pub struct EmailRequestLegacy {
     pub key: String,
@@ -224,13 +150,13 @@ pub struct EmailRequestLegacy {
     pub template: EmailTemplateTypeLegacy,
     pub from: AddressFieldLegacy,
     #[serde(rename = "replyTo")]
-    pub reply_to: Option<AddressFieldsLegacy>,
-    pub to: Option<AddressFieldsLegacy>,
+    pub reply_to: Option<ListNameLegacy>,
+    pub to: Option<ListNameLegacy>,
     pub subject: String,
     pub content: Option<String>,
     pub html: Option<String>,
-    pub cc: Option<AddressFieldsLegacy>,
-    pub bcc: Option<AddressFieldsLegacy>,
+    pub cc: Option<ListNameLegacy>,
+    pub bcc: Option<ListNameLegacy>,
     #[serde(rename = "attachments[]")]
     pub attachments: Option<Vec<AttachmentLegacy>>,
 }
@@ -419,7 +345,11 @@ mod tests {
         }"#;
         let req: EmailRequestLegacy = serde_json::from_str(json).unwrap();
         let to: Vec<String> = req.to.unwrap().try_into().unwrap();
-        assert_eq!(to.len(), 2);
+        let formatted = to.join(",");
+        assert_eq!(
+            formatted,
+            "recipient@datasektionen.se, test <other@datasektionen.se>"
+        )
     }
 
     #[test]
@@ -460,14 +390,10 @@ mod tests {
         assert_eq!(from, "=?UTF-8?B?w6XDpMO2?= <sender@datasektionen.se>");
 
         let to: Vec<String> = req.to.unwrap().try_into().unwrap();
-        assert_eq!(to.len(), 2);
+        let formatted = to.join(",");
         assert_eq!(
-            to.get(0).unwrap(),
-            "=?UTF-8?B?w6XDpMO2?= <recipient@datasektionen.se>"
-        );
-        assert_eq!(
-            to.get(1).unwrap(),
-            "=?UTF-8?B?w6XDpMO2?= <other@datasektionen.se>"
+            formatted,
+            "=?UTF-8?B?w6XDpMO2?= <recipient@datasektionen.se>, =?UTF-8?B?w6XDpMO2?= <other@datasektionen.se>"
         );
     }
 }
