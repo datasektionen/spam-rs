@@ -310,6 +310,8 @@ async fn send_mail_legacy(
         Either::Right(form) => form.into_inner(),
     };
 
+    debug!("received email request: {:?}", body);
+
     let hive_url = env::var("HIVE_URL")
         .map_err(|e| Error::EnvVarMissing(format!("HIVE_URL missing: {}", e)))?;
 

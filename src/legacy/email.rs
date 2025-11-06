@@ -1,6 +1,5 @@
-use std::fmt::Display;
+use std::fmt::{Debug, Display};
 
-use base64::{Engine, prelude::BASE64_STANDARD};
 use serde::{Deserialize, Deserializer};
 use serde_json::Value;
 
@@ -28,10 +27,11 @@ impl Display for EmailTemplateTypeLegacy {
 impl From<EmailTemplateTypeLegacy> for String {
     fn from(template: EmailTemplateTypeLegacy) -> Self {
         match template {
-            EmailTemplateTypeLegacy::Default => "default".to_string(),
-            EmailTemplateTypeLegacy::Metaspexet => "metaspexet".to_string(),
-            EmailTemplateTypeLegacy::None => "none".to_string(),
+            EmailTemplateTypeLegacy::Default => "default",
+            EmailTemplateTypeLegacy::Metaspexet => "metaspexet",
+            EmailTemplateTypeLegacy::None => "none",
         }
+        .to_string()
     }
 }
 
@@ -82,19 +82,12 @@ impl TryFrom<&AddressFieldLegacy> for String {
 
     fn try_from(value: &AddressFieldLegacy) -> Result<Self, Self::Error> {
         match value {
-            AddressFieldLegacy::Address(addr) => match addr.is_ascii() {
-                true => Ok(addr.to_owned()),
-                _ => Err(Error::NotASCII("address field".to_string())),
-            },
+            AddressFieldLegacy::Address(addr) => Ok(addr.to_owned()),
             AddressFieldLegacy::NameAndAddress(name_addr) => {
-                let name = match name_addr.name.is_ascii() {
-                    true => &name_addr.name,
-                    _ => &format!("=?UTF-8?B?{}?=", BASE64_STANDARD.encode(&name_addr.name)),
-                };
                 if !name_addr.address.is_ascii() {
                     return Err(Error::NotASCII("address field".to_string()));
                 }
-                Ok(format!("{} <{}>", name, name_addr.address))
+                Ok(format!("{} <{}>", name_addr.name, name_addr.address))
             }
         }
     }
@@ -102,9 +95,8 @@ impl TryFrom<&AddressFieldLegacy> for String {
 
 impl TryFrom<AddressFieldLegacy> for String {
     type Error = Error;
-
     fn try_from(value: AddressFieldLegacy) -> Result<Self, Self::Error> {
-        value.try_into()
+        (&value).try_into()
     }
 }
 
@@ -174,7 +166,7 @@ impl TryFrom<AddressFieldsLegacy> for Vec<String> {
     type Error = Error;
 
     fn try_from(value: AddressFieldsLegacy) -> Result<Self, Self::Error> {
-        value.try_into()
+        (&value).try_into()
     }
 }
 
@@ -192,7 +184,7 @@ pub struct AttachmentLegacy {
     pub encoding: String,
 }
 
-#[derive(serde::Deserialize, Debug, Clone)]
+#[derive(serde::Deserialize, Clone)]
 pub struct EmailRequestLegacy {
     pub key: String,
     #[serde(default)]
@@ -208,6 +200,24 @@ pub struct EmailRequestLegacy {
     pub bcc: Option<AddressFieldsLegacy>,
     #[serde(rename = "attachments[]")]
     pub attachments: Option<Vec<AttachmentLegacy>>,
+}
+
+impl Debug for EmailRequestLegacy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EmailRequestLegacy")
+            .field("key", &"<hidden>")
+            .field("template", &self.template)
+            .field("from", &self.from)
+            .field("reply_to", &self.reply_to)
+            .field("to", &self.to)
+            .field("subject", &self.subject)
+            .field("content", &self.content)
+            .field("html", &self.html)
+            .field("cc", &self.cc)
+            .field("bcc", &self.bcc)
+            .field("attachments", &self.attachments)
+            .finish()
+    }
 }
 
 #[cfg(test)]
