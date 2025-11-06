@@ -227,10 +227,14 @@ impl Client {
         let email_content = EmailContent::builder().simple(message).build();
         let reply_to = mail
             .reply_to
-            .as_ref()
-            .map(|r| String::try_from(r))
-            .transpose()?
-            .map(|addr| vec![addr]);
+            .map(|rt_list| {
+                rt_list
+                    .to_list()
+                    .iter()
+                    .map(|rt| rt.try_into())
+                    .collect::<Result<Vec<String>, Error>>()
+            })
+            .transpose()?;
 
         let resp = self
             .inner

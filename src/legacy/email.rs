@@ -130,7 +130,7 @@ pub struct EmailRequestLegacy {
     pub template: EmailTemplateTypeLegacy,
     pub from: AddressFieldLegacy,
     #[serde(rename = "replyTo")]
-    pub reply_to: Option<AddressFieldLegacy>,
+    pub reply_to: Option<ListNameLegacy>,
     pub to: Option<ListNameLegacy>,
     pub subject: String,
     pub content: Option<String>,

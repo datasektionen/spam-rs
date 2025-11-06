@@ -1,4 +1,5 @@
 use aws_sdk_sesv2 as sesv2;
+use log::error;
 use std::fmt::Display;
 
 use actix_web::{HttpResponse, ResponseError, http::StatusCode};
@@ -77,6 +78,7 @@ impl From<&Error> for HttpResponse {
 
 impl ResponseError for Error {
     fn error_response(&self) -> HttpResponse {
+        error!("Response Error: {}", self);
         HttpResponse::from(self)
     }
     fn status_code(&self) -> actix_web::http::StatusCode {
