@@ -137,7 +137,6 @@ impl TryFrom<AddressFieldLegacy> for String {
 pub enum AddressFieldsLegacy {
     AddressField(AddressFieldLegacy),
     AddressList(Vec<AddressFieldLegacy>),
-    AddressListString(String), // Comma separated list of addresses
 }
 
 impl<'de> Deserialize<'de> for AddressFieldsLegacy {
@@ -151,7 +150,11 @@ impl<'de> Deserialize<'de> for AddressFieldsLegacy {
             // String could be a single address OR comma-separated list
             Value::String(s) => {
                 if s.contains(',') {
-                    Ok(AddressFieldsLegacy::AddressListString(s))
+                    let addresses = s
+                        .split(",")
+                        .map(|s| AddressFieldLegacy::Address(s.trim().to_string()))
+                        .collect();
+                    Ok(Self::AddressList(addresses))
                 } else {
                     Ok(AddressFieldsLegacy::AddressField(
                         AddressFieldLegacy::Address(s),
@@ -187,9 +190,6 @@ impl TryFrom<&AddressFieldsLegacy> for Vec<String> {
             AddressFieldsLegacy::AddressField(addr) => Ok(vec![addr.try_into()?]),
             AddressFieldsLegacy::AddressList(list) => {
                 list.into_iter().map(|a| a.try_into()).collect()
-            }
-            AddressFieldsLegacy::AddressListString(list) => {
-                Ok(list.split(',').map(|s| s.trim().to_string()).collect())
             }
         }
     }
@@ -268,7 +268,7 @@ mod tests {
         let req: EmailRequestLegacy = serde_json::from_str(json).unwrap();
         assert_eq!(req.key, "mykey123");
         assert_eq!(req.subject, "Hello World");
-        assert_eq!(req.html.as_ref().unwrap(), "<p>Test email</p>");
+        assert_eq!(req.html.unwrap(), "<p>Test email</p>");
         assert_eq!(req.template, EmailTemplateTypeLegacy::Default);
     }
 
@@ -281,7 +281,7 @@ mod tests {
             "content": "This is plain text"
         }"#;
         let req: EmailRequestLegacy = serde_json::from_str(json).unwrap();
-        assert_eq!(req.content.as_ref().unwrap(), "This is plain text");
+        assert_eq!(req.content.unwrap(), "This is plain text");
         assert!(req.html.is_none());
     }
 
@@ -326,7 +326,7 @@ mod tests {
             "html": "<p>Test</p>"
         }"#;
         let req: EmailRequestLegacy = serde_json::from_str(json).unwrap();
-        let recipients: Vec<String> = req.to.as_ref().unwrap().try_into().unwrap();
+        let recipients: Vec<String> = req.to.unwrap().try_into().unwrap();
         assert_eq!(recipients.len(), 2);
     }
 
@@ -344,7 +344,7 @@ mod tests {
         let req: EmailRequestLegacy = serde_json::from_str(json).unwrap();
         assert!(req.cc.is_some());
         assert!(req.bcc.is_some());
-        let bcc: Vec<String> = req.bcc.as_ref().unwrap().try_into().unwrap();
+        let bcc: Vec<String> = req.bcc.unwrap().try_into().unwrap();
         assert_eq!(bcc.len(), 2)
     }
 
@@ -418,7 +418,7 @@ mod tests {
             "subject": "Multiple recipients"
         }"#;
         let req: EmailRequestLegacy = serde_json::from_str(json).unwrap();
-        let to: Vec<String> = req.to.as_ref().unwrap().try_into().unwrap();
+        let to: Vec<String> = req.to.unwrap().try_into().unwrap();
         assert_eq!(to.len(), 2);
     }
 
@@ -431,7 +431,7 @@ mod tests {
             "subject": "Multiple recipients"
         }"#;
         let req: EmailRequestLegacy = serde_json::from_str(json).unwrap();
-        let to: Vec<String> = req.to.as_ref().unwrap().try_into().unwrap();
+        let to: Vec<String> = req.to.unwrap().try_into().unwrap();
         assert_eq!(to.len(), 2);
     }
 
@@ -452,10 +452,22 @@ mod tests {
         let json = r#"{
             "key": "mykey123",
             "from": "åäö <sender@datasektionen.se>",
+            "to": "åäö <recipient@datasektionen.se>, åäö <other@datasektionen.se>",
             "subject": "Hello"
         }"#;
         let req: EmailRequestLegacy = serde_json::from_str(json).unwrap();
         let from: String = req.from.try_into().unwrap();
         assert_eq!(from, "=?UTF-8?B?w6XDpMO2?= <sender@datasektionen.se>");
+
+        let to: Vec<String> = req.to.unwrap().try_into().unwrap();
+        assert_eq!(to.len(), 2);
+        assert_eq!(
+            to.get(0).unwrap(),
+            "=?UTF-8?B?w6XDpMO2?= <recipient@datasektionen.se>"
+        );
+        assert_eq!(
+            to.get(1).unwrap(),
+            "=?UTF-8?B?w6XDpMO2?= <other@datasektionen.se>"
+        );
     }
 }
