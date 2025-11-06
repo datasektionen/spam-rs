@@ -1,5 +1,6 @@
 use std::fmt::{Debug, Display};
 
+use base64::{Engine, prelude::BASE64_STANDARD};
 use serde::{Deserialize, Deserializer};
 use serde_json::Value;
 
@@ -82,15 +83,47 @@ impl TryFrom<&AddressFieldLegacy> for String {
 
     fn try_from(value: &AddressFieldLegacy) -> Result<Self, Self::Error> {
         match value {
-            AddressFieldLegacy::Address(addr) => Ok(addr.to_owned()),
+            AddressFieldLegacy::Address(addr) => match addr.is_ascii() {
+                true => Ok(addr.clone()),
+                _ => {
+                    // if address id form Name <addr>, then we just check that addr is ASCII, rest encoded as UTF-8
+                    if addr.contains('<') {
+                        let (name, addr) = addr
+                            .split_once('<')
+                            .ok_or(Error::InvalidAddress("".to_string()))?;
+
+                        match addr.is_ascii() {
+                            true => Ok(format!(
+                                "{} <{}>",
+                                format_utf8(name),
+                                addr.trim_end_matches('>')
+                            )),
+                            _ => Err(Error::InvalidAddress("address is not ASCII".to_string())),
+                        }
+                    } else {
+                        return Err(Error::InvalidAddress(
+                            "is not ASCII and is not in Name <addr> format".to_string(),
+                        ));
+                    }
+                }
+            },
             AddressFieldLegacy::NameAndAddress(name_addr) => {
+                let name = if name_addr.name.is_ascii() {
+                    &name_addr.name
+                } else {
+                    &format_utf8(&name_addr.name)
+                };
                 if !name_addr.address.is_ascii() {
                     return Err(Error::NotASCII("address field".to_string()));
                 }
-                Ok(format!("{} <{}>", name_addr.name, name_addr.address))
+                Ok(format!("{} <{}>", name, name_addr.address))
             }
         }
     }
+}
+
+fn format_utf8(name: &str) -> String {
+    format!("=?UTF-8?B?{}?=", BASE64_STANDARD.encode(name.trim()))
 }
 
 impl TryFrom<AddressFieldLegacy> for String {
@@ -393,12 +426,36 @@ mod tests {
     fn valid_fancy_address() {
         let json = r#"{
             "key": "mykey123",
-            "from": "Tiki <sender@datasektionen.se>",
+            "from": "Test <sender@datasektionen.se>",
             "to": ["Test <recipient@datasektionen.se>", "Other <other@datasektionen.se>"],
             "subject": "Multiple recipients"
         }"#;
         let req: EmailRequestLegacy = serde_json::from_str(json).unwrap();
         let to: Vec<String> = req.to.as_ref().unwrap().try_into().unwrap();
         assert_eq!(to.len(), 2);
+    }
+
+    #[test]
+    fn valid_utf8_address() {
+        let json = r#"{
+            "key": "mykey123",
+            "from": {"name": "åäö", "address": "sender@datasektionen.se"},
+            "subject": "Hello"
+        }"#;
+        let req: EmailRequestLegacy = serde_json::from_str(json).unwrap();
+        let from: String = req.from.try_into().unwrap();
+        assert_eq!(from, "=?UTF-8?B?w6XDpMO2?= <sender@datasektionen.se>");
+    }
+
+    #[test]
+    fn valid_utf8_fancy_address() {
+        let json = r#"{
+            "key": "mykey123",
+            "from": "åäö <sender@datasektionen.se>",
+            "subject": "Hello"
+        }"#;
+        let req: EmailRequestLegacy = serde_json::from_str(json).unwrap();
+        let from: String = req.from.try_into().unwrap();
+        assert_eq!(from, "=?UTF-8?B?w6XDpMO2?= <sender@datasektionen.se>");
     }
 }
