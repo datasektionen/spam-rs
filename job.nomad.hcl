@@ -2,6 +2,8 @@ job "spam" {
   type = "service"
 
   group "spam" {
+    count = 2
+
     network {
       port "http" { }
     }
@@ -15,6 +17,13 @@ job "spam" {
         "traefik.http.routers.spam.rule=Host(`spam.datasektionen.se`)",
         "traefik.http.routers.spam.tls.certresolver=default",
       ]
+
+      check {
+        type     = "http"
+        path     = "/api/ping"
+        interval = "10s"
+        timeout  = "2s"
+      }
     }
 
     task "spam" {
@@ -44,7 +53,8 @@ ENV
       }
 
       resources {
-        memory = 120
+        memory = 50
+        cpu = 60
       }
     }
   }
