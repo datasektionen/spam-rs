@@ -2,7 +2,7 @@ use actix_cors::Cors;
 use actix_web::http::Method;
 use actix_web::middleware::Logger;
 use actix_web::web::scope;
-use actix_web::{App, HttpServer, get, post};
+use actix_web::{App, Either, HttpServer, get, post};
 use actix_web::{HttpResponse, web};
 use aws_config::BehaviorVersion;
 use aws_sdk_sesv2 as sesv2;
@@ -94,16 +94,9 @@ impl Client {
         // but not assuredly ASCII
         let from: String = mail.from.try_into()?;
 
-        let cc = mail
-            .cc
-            .map(|cc_list| {
-                cc_list
-                    .to_list()
-                    .iter()
-                    .map(|cc| cc.try_into())
-                    .collect::<Result<Vec<String>, Error>>()
-            })
-            .transpose()?;
+        let to = mail.to.map(|addr| addr.try_into()).transpose()?;
+        let cc = mail.cc.map(|addr| addr.try_into()).transpose()?;
+        let bcc = mail.bcc.map(|addr| addr.try_into()).transpose()?;
 
         let content = if let Some(html) = &mail.html {
             Ok(html)
@@ -114,28 +107,6 @@ impl Client {
         }?;
 
         let is_html = mail.html.is_some();
-
-        let to: Option<Vec<String>> = mail
-            .to
-            .map(|to_list| {
-                to_list
-                    .to_list()
-                    .iter()
-                    .map(|to| to.try_into())
-                    .collect::<Result<Vec<String>, Error>>()
-            })
-            .transpose()?;
-
-        let bcc = mail
-            .bcc
-            .map(|bcc_list| {
-                bcc_list
-                    .to_list()
-                    .iter()
-                    .map(|bcc| bcc.try_into())
-                    .collect::<Result<Vec<String>, Error>>()
-            })
-            .transpose()?;
 
         // Build the destination
         let dest = Destination::builder()
@@ -225,12 +196,7 @@ impl Client {
             .build();
 
         let email_content = EmailContent::builder().simple(message).build();
-        let reply_to = mail
-            .reply_to
-            .as_ref()
-            .map(|r| String::try_from(r))
-            .transpose()?
-            .map(|addr| vec![addr]);
+        let reply_to = mail.reply_to.map(|addr| addr.try_into()).transpose()?;
 
         let resp = self
             .inner
@@ -337,16 +303,12 @@ async fn main() -> std::io::Result<()> {
 #[post("/sendmail")]
 async fn send_mail_legacy(
     ses: web::Data<Client>,
-    json: Option<web::Json<EmailRequestLegacy>>,
-    form: Option<web::Form<EmailRequestLegacy>>,
+    body: Either<web::Json<EmailRequestLegacy>, web::Form<EmailRequestLegacy>>,
 ) -> Result<HttpResponse, Error> {
-    let body = if let Some(json) = json {
-        Ok(json.into_inner())
-    } else if let Some(form) = form {
-        Ok(form.into_inner())
-    } else {
-        Err(Error::InvalidContentType)
-    }?;
+    let body = match body {
+        Either::Left(json) => json.into_inner(),
+        Either::Right(form) => form.into_inner(),
+    };
 
     let hive_url = env::var("HIVE_URL")
         .map_err(|e| Error::EnvVarMissing(format!("HIVE_URL missing: {}", e)))?;

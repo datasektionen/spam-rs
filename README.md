@@ -44,7 +44,6 @@ The following field are optional:
   to.
 - `template`: The name of a template to use for the email. There are
   currently three templates available:
-
   - `default`: A simple template with a header and footer in the
     Datasektionen style. This is the default if **no template** is
     specified.
