@@ -131,7 +131,12 @@ impl Client {
                 }
             }
         } else if !is_html {
-            markdown::to_html(content)
+            let mut options = markdown::Options::default();
+            options.compile.allow_any_img_src = true;
+            options.compile.allow_dangerous_html = true;
+            markdown::to_html_with_options(content, &options).map_err(|e| {
+                Error::EmailBody(format!("Failed to convert markdown to HTML: {}", e))
+            })?
         } else {
             content.to_string()
         };
@@ -250,11 +255,16 @@ impl Client {
         template: &EmailTemplateTypeLegacy,
         content: String,
         is_html: bool,
-    ) -> Result<String, handlebars::RenderError> {
+    ) -> Result<String, Error> {
         let content = if is_html {
             content
         } else {
-            markdown::to_html(&content)
+            let mut options = markdown::Options::default();
+            options.compile.allow_any_img_src = true;
+            options.compile.allow_dangerous_html = true;
+            markdown::to_html_with_options(&content, &options).map_err(|e| {
+                Error::EmailBody(format!("Failed to convert markdown to HTML: {}", e))
+            })?
         };
         let data = ContentData { is_html, content };
         let rendered = self.templates.render(&template.to_string(), &data)?;
