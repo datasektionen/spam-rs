@@ -17,7 +17,7 @@ COPY src src
 
 RUN cargo build -r
 
-FROM rust:1.89-alpine
+FROM alpine:latest
 WORKDIR /srv
 
 COPY --from=build /build/target/release/spam-rs spam-rs
