@@ -16,6 +16,9 @@ job "spam" {
         "traefik.enable=true",
         "traefik.http.routers.spam.rule=Host(`spam.datasektionen.se`)",
         "traefik.http.routers.spam.tls.certresolver=default",
+
+        "traefik.http.routers.spam-internal.rule=Host(`spam.nomad.dsekt.internal`)",
+        "traefik.http.routers.spam-internal.entrypoints=web-internal",
       ]
 
       check {
