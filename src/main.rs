@@ -220,7 +220,6 @@ impl Client {
 
         Ok(message_id)
     }
-    
 
     fn load_templates(&mut self) -> Result<(), Error> {
         let template_files = vec![
@@ -305,14 +304,13 @@ async fn main() -> std::io::Result<()> {
                 scope("/api")
                     .service(ping)
                     .service(scope("/legacy").service(send_mail_legacy))
-                    .service(scope("/mattermost").service(mattermost::send_post)),
+                    .service(scope("/mattermost").service(mattermost::send_notification)),
             )
     })
     .bind((address, port))?
     .run()
     .await
 }
-
 
 pub async fn hive_authenticate_request(key: &str) -> Result<(), Error> {
     let hive_url = env::var("HIVE_URL")
@@ -335,7 +333,7 @@ pub async fn hive_authenticate_request(key: &str) -> Result<(), Error> {
         .trim()
         .parse::<bool>()
         .map_err(|e| Error::ApiKeyLookup(format!("Key parse failed: {}", e)))?;
-    
+
     if is_auth {
         Ok(())
     } else {
@@ -352,8 +350,7 @@ async fn send_mail_legacy(
         Either::Left(json) => json.into_inner(),
         Either::Right(form) => form.into_inner(),
     };
-    
-    
+
     hive_authenticate_request(&body.key).await?;
 
     debug!("received email request: {:?}", body);
@@ -362,7 +359,6 @@ async fn send_mail_legacy(
         .await
         .map(|message_id| HttpResponse::Ok().body(message_id.to_string()))
 }
-
 
 #[get("/ping")]
 async fn ping() -> HttpResponse {

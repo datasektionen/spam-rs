@@ -93,6 +93,14 @@ An example of a valid JSON request:
 
 Returns "I'm alive!" if the server is running.
 
+
+# Environment variables
+
+| Name                       | Description                                   |
+|----------------------------|-----------------------------------------------|
+| `MATTERMOST_ALLOWED_HOSTS` | Allowed Mattermost hosts to send messages to. |
+
+
 # Spam
 
 ![spam](http://media.boingboing.net/wp-content/uploads/2016/01/Spam-Can.jpg)

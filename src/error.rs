@@ -24,6 +24,7 @@ pub enum Error {
     MissingMessage,
     MattermostSend(String),
     HostNotAllowed(String),
+    Deserialization(String),
 }
 
 impl From<sesv2::Error> for Error {
@@ -65,6 +66,7 @@ impl Display for Error {
             Error::MissingMessage => write!(f, "No Mattermost message provided."),
             Error::MattermostSend(msg) => write!(f, "Failed to send Mattermost post: {}", msg),
             Error::HostNotAllowed(host) => write!(f, "Mattermost host not allowed: {}", host),
+            Error::Deserialization(msg) => write!(f, "Failed to deserialize response: {}", msg),
         }
     }
 }
@@ -82,6 +84,7 @@ impl From<&Error> for HttpResponse {
             | Error::MissingBotToken
             | Error::MissingMessage
             | Error::MattermostSend(_)
+            | Error::Deserialization(_)
             | Error::EnvVarMissing(_) => HttpResponse::InternalServerError().body(val.to_string()),
             Error::Attachment(_)
             | Error::EmailBody(_)
@@ -111,6 +114,7 @@ impl ResponseError for Error {
             | Error::MissingBotToken
             | Error::MissingMessage
             | Error::MattermostSend(_)
+            | Error::Deserialization(_)
             | Error::EnvVarMissing(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Error::Attachment(_)
             | Error::EmailBody(_)

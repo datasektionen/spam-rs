@@ -1,8 +1,19 @@
 use crate::error::Error;
 use crate::hive_authenticate_request;
-use actix_web::{post, web, HttpResponse};
+use actix_web::{HttpResponse, post, web};
+use serde_json::json;
 use std::env;
 use url::Url;
+
+#[derive(serde::Deserialize, Clone)]
+pub struct MattermostUser {
+    pub id: String,
+}
+
+#[derive(serde::Deserialize, Clone)]
+pub struct MattermostChannel {
+    pub id: String,
+}
 
 const ALLOWED_HOSTS_ENV: &str = "MATTERMOST_ALLOWED_HOSTS";
 
@@ -14,12 +25,13 @@ fn host_allowed(host: &Url, allowed: &str) -> bool {
 }
 
 #[derive(serde::Deserialize, Clone)]
-pub struct MattermostRequest {
+pub struct NotificationRequest {
     host: Url,
-    channel_id: String,
+    user_email: String,
     bot_token: String,
-    message: String,
     key: String,
+    title: String,
+    body: String,
 }
 
 pub struct PostRequest {
@@ -27,6 +39,7 @@ pub struct PostRequest {
     channel_id: String,
     bot_token: String,
     message: String,
+    props: Option<PostProps>,
 }
 
 impl PostRequest {
@@ -34,14 +47,31 @@ impl PostRequest {
         PostBody {
             channel_id: &self.channel_id,
             message: &self.message,
+            props: &self.props,
         }
     }
+}
+
+#[derive(serde::Serialize)]
+struct Attachment {
+    fallback: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    color: Option<String>,
+    text: String,
+    title: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+struct PostProps {
+    attachments: Vec<Attachment>,
 }
 
 #[derive(serde::Serialize)]
 struct PostBody<'a> {
     channel_id: &'a String,
     message: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    props: &'a Option<PostProps>,
 }
 
 impl PostRequest {
@@ -63,7 +93,8 @@ pub struct PostRequestBuilder {
     host: Url,
     channel_id: Option<String>,
     bot_token: Option<String>,
-    content: Option<String>,
+    message: Option<String>,
+    props: Option<PostProps>,
 }
 
 impl PostRequestBuilder {
@@ -72,7 +103,8 @@ impl PostRequestBuilder {
             host: host.clone(),
             channel_id: None,
             bot_token: None,
-            content: None,
+            message: None,
+            props: None,
         }
     }
 
@@ -90,9 +122,37 @@ impl PostRequestBuilder {
         }
     }
 
-    pub fn with_content(self, content: &str) -> PostRequestBuilder {
+    pub fn with_attachment(self, title: &str, text: &str) -> PostRequestBuilder {
         PostRequestBuilder {
-            content: Some(content.into()),
+            props: self.props.map_or_else(
+                || {
+                    Some(PostProps {
+                        attachments: vec![Attachment {
+                            title: Some(title.into()),
+                            text: text.into(),
+                            fallback: text.into(),
+                            color: None,
+                        }],
+                    })
+                },
+                |props| {
+                    let mut attachments = props.attachments;
+                    attachments.push(Attachment {
+                        title: Some(title.into()),
+                        text: text.into(),
+                        fallback: text.into(),
+                        color: None,
+                    });
+                    Some(PostProps { attachments })
+                },
+            ),
+            ..self
+        }
+    }
+
+    pub fn with_message(self, message: &str) -> PostRequestBuilder {
+        PostRequestBuilder {
+            message: Some(message.into()),
             ..self
         }
     }
@@ -107,7 +167,8 @@ impl PostRequestBuilder {
             endpoint,
             bot_token: self.bot_token.ok_or(Error::MissingBotToken)?,
             channel_id: self.channel_id.ok_or(Error::MissingChannel)?,
-            message: self.content.ok_or(Error::MissingContent)?,
+            message: self.message.ok_or(Error::MissingMessage)?,
+            props: self.props,
         })
     }
 }
@@ -126,8 +187,62 @@ impl MattermostClient {
     }
 }
 
-#[post("/sendpost")]
-pub async fn send_post(body: web::Json<MattermostRequest>) -> Result<HttpResponse, Error> {
+async fn get_dm_channel(user_email: &str, host: &Url, bot_token: &str) -> Result<String, Error> {
+    let client = reqwest::Client::new();
+    let user = client
+        .get(
+            host.join(format!("/api/v4/users/email/{}", user_email).as_str())
+                .map_err(|e| Error::InvalidAddress(e.to_string()))?,
+        )
+        .bearer_auth(bot_token)
+        .send()
+        .await
+        .map_err(|e| Error::MattermostSend(e.to_string()))?
+        .error_for_status()
+        .map_err(|e| Error::MattermostSend(e.to_string()))?
+        .json::<MattermostUser>()
+        .await
+        .map_err(|e| Error::Deserialization(e.to_string()))?;
+
+    let bot = client
+        .get(
+            host.join("/api/v4/users/me")
+                .map_err(|e| Error::InvalidAddress(e.to_string()))?,
+        )
+        .bearer_auth(bot_token)
+        .send()
+        .await
+        .map_err(|e| Error::MattermostSend(e.to_string()))?
+        .error_for_status()
+        .map_err(|e| Error::MattermostSend(e.to_string()))?
+        .json::<MattermostUser>()
+        .await
+        .map_err(|e| Error::Deserialization(e.to_string()))?;
+
+    // Create the dm channel
+    let res = client
+        .post(
+            host.join("/api/v4/channels/direct")
+                .map_err(|e| Error::InvalidAddress(e.to_string()))?,
+        )
+        .bearer_auth(bot_token)
+        .json(&json!([user.id, bot.id]))
+        .send()
+        .await
+        .map_err(|e| Error::MattermostSend(e.to_string()))?
+        .error_for_status()
+        .map_err(|e| Error::MattermostSend(e.to_string()))?
+        .json::<MattermostChannel>()
+        .await
+        .map_err(|e| Error::Deserialization(e.to_string()))?;
+
+    Ok(res.id)
+}
+
+#[post("/notify")]
+pub async fn send_notification(
+    body: web::Json<NotificationRequest>,
+) -> Result<HttpResponse, Error> {
     hive_authenticate_request(&body.key).await?;
 
     let allowed = env::var(ALLOWED_HOSTS_ENV)
@@ -136,10 +251,13 @@ pub async fn send_post(body: web::Json<MattermostRequest>) -> Result<HttpRespons
         return Err(Error::HostNotAllowed(body.host.to_string()));
     }
 
+    let channel = get_dm_channel(&body.user_email, &body.host, &body.bot_token).await?;
+
     let res = PostRequestBuilder::new(&body.host)
-        .with_content(&body.message)
+        .with_attachment(&body.title, &body.body)
         .using_bot(&body.bot_token)
-        .to_channel(&body.channel_id)
+        .to_channel(&channel)
+        .with_message("")
         .build()?
         .send()
         .await?;
@@ -163,7 +281,7 @@ mod tests {
         let post = PostRequestBuilder::new(&Url::parse("https://example.com/").unwrap())
             .to_channel("xyz")
             .using_bot("abc")
-            .with_content("text")
+            .with_message("text")
             .build();
 
         assert!(post.is_ok());
@@ -183,7 +301,7 @@ mod tests {
         // Missing bot_token
         let post = PostRequestBuilder::new(&Url::parse("https://example.com/").unwrap())
             .to_channel("xyz")
-            .with_content("Hello world")
+            .with_message("Hello world")
             .build();
 
         assert!(post.is_err());
@@ -196,12 +314,12 @@ mod tests {
             .build();
 
         assert!(post.is_err());
-        assert_matches!(post.err(), Some(Error::MissingContent));
+        assert_matches!(post.err(), Some(Error::MissingMessage));
 
         // Missing channel
         let post = PostRequestBuilder::new(&Url::parse("https://example.com/").unwrap())
             .using_bot("abc")
-            .with_content("text")
+            .with_message("text")
             .build();
 
         assert!(post.is_err());
