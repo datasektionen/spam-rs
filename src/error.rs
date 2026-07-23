@@ -19,6 +19,11 @@ pub enum Error {
     NotASCII(String),
     InvalidAddress(String),
     EmailBody(String),
+    MissingChannel,
+    MissingBotToken,
+    MissingMessage,
+    MattermostSend(String),
+    HostNotAllowed(String),
 }
 
 impl From<sesv2::Error> for Error {
@@ -55,6 +60,11 @@ impl Display for Error {
             Error::NotASCII(field) => write!(f, "Contains non-ASCII characters: {}", field),
             Error::MissingContent => write!(f, "No 'html' or 'content' field provided."),
             Error::InvalidAddress(msg) => write!(f, "Invalid address: {}", msg),
+            Error::MissingChannel => write!(f, "No Mattermost channel provided."),
+            Error::MissingBotToken => write!(f, "No Mattermost bot token provided."),
+            Error::MissingMessage => write!(f, "No Mattermost message provided."),
+            Error::MattermostSend(msg) => write!(f, "Failed to send Mattermost post: {}", msg),
+            Error::HostNotAllowed(host) => write!(f, "Mattermost host not allowed: {}", host),
         }
     }
 }
@@ -63,10 +73,15 @@ impl From<&Error> for HttpResponse {
     fn from(val: &Error) -> Self {
         match val {
             Error::ApiKeyInvalid => HttpResponse::Unauthorized().body(val.to_string()),
+            Error::HostNotAllowed(_) => HttpResponse::Forbidden().body(val.to_string()),
             Error::EmailSend(_)
             | Error::TemplateRender(_)
             | Error::TemplateLoad(_)
             | Error::ApiKeyLookup(_)
+            | Error::MissingChannel
+            | Error::MissingBotToken
+            | Error::MissingMessage
+            | Error::MattermostSend(_)
             | Error::EnvVarMissing(_) => HttpResponse::InternalServerError().body(val.to_string()),
             Error::Attachment(_)
             | Error::EmailBody(_)
@@ -87,10 +102,15 @@ impl ResponseError for Error {
     fn status_code(&self) -> actix_web::http::StatusCode {
         match self {
             Error::ApiKeyInvalid => StatusCode::UNAUTHORIZED,
+            Error::HostNotAllowed(_) => StatusCode::FORBIDDEN,
             Error::EmailSend(_)
             | Error::TemplateRender(_)
             | Error::TemplateLoad(_)
             | Error::ApiKeyLookup(_)
+            | Error::MissingChannel
+            | Error::MissingBotToken
+            | Error::MissingMessage
+            | Error::MattermostSend(_)
             | Error::EnvVarMissing(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Error::Attachment(_)
             | Error::EmailBody(_)

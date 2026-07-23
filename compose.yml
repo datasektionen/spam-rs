@@ -15,6 +15,8 @@ services:
       APP_SECRET: insert-app-secret
       HIVE_URL: http://nyckeln:7004/api/v1
       HIVE_SECRET: 1234567890abcdefabcdef
+      MATTERMOST_URL: http://mattermost:8065
+      MATTERMOST_ALLOWED_HOSTS: http://mattermost:8065
   smtp:
     image: changemakerstudiosus/papercut-smtp
     container_name: smtp
@@ -45,6 +47,48 @@ services:
         target: /config.yaml
     ports:
       - 7004:7004
+
+  mattermost-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: mmuser
+      POSTGRES_PASSWORD: mmuser_password
+      POSTGRES_DB: mattermost
+    volumes:
+      - mattermost_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mmuser -d mattermost"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mattermost:
+    image: mattermost/mattermost-team-edition:latest
+    depends_on:
+      mattermost-db:
+        condition: service_healthy
+    ports:
+      - 8065:8065
+    environment:
+      MM_SQLSETTINGS_DRIVERNAME: postgres
+      MM_SQLSETTINGS_DATASOURCE: "postgres://mmuser:mmuser_password@mattermost-db:5432/mattermost?sslmode=disable&connect_timeout=10"
+      MM_SERVICESETTINGS_SITEURL: "http://localhost:8065"
+      MM_SERVICESETTINGS_ENABLEBOTACCOUNTCREATION: "true"
+      MM_SERVICESETTINGS_ENABLEUSERACCESSTOKENS: "true"
+    volumes:
+      - mattermost_config:/mattermost/config
+      - mattermost_data:/mattermost/data
+      - mattermost_logs:/mattermost/logs
+      - mattermost_plugins:/mattermost/plugins
+      - mattermost_client_plugins:/mattermost/client/plugins
+
+volumes:
+  mattermost_postgres_data:
+  mattermost_config:
+  mattermost_data:
+  mattermost_logs:
+  mattermost_plugins:
+  mattermost_client_plugins:
 
 configs:
   nyckeln.yaml:

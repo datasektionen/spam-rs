@@ -2761,6 +2761,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "url",
  "utoipa",
  "utoipa-actix-web",
  "utoipa-redoc",
