@@ -16,6 +16,8 @@ Sends a formatted message via DM to a user on Mattermost.
 | bot_token  | ✅        | Token for the bot that should send the message.                                                                           |
 | title      | ✅        | The title of the message.                                                                                                 |
 | body       | ✅        | The body of the message.                                                                                                  |
+| key        | ✅        | The secret key for spam-rs.                                                                                               |
+| thumbnail  |          | URL to an optional thumbnail image. Cannot be an SVG (despite Mattermost's own documentation).                            |
 
 ## Legacy
 

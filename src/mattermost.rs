@@ -32,6 +32,7 @@ pub struct NotificationRequest {
     key: String,
     title: String,
     body: String,
+    thumbnail: Option<String>,
 }
 
 pub struct PostRequest {
@@ -53,12 +54,15 @@ impl PostRequest {
 }
 
 #[derive(serde::Serialize)]
+// See https://developers.mattermost.com/integrate/reference/message-attachments/
 struct Attachment {
     fallback: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     color: Option<String>,
     text: String,
     title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thumb_url: Option<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -122,7 +126,12 @@ impl PostRequestBuilder {
         }
     }
 
-    pub fn with_attachment(self, title: &str, text: &str) -> PostRequestBuilder {
+    pub fn with_attachment(
+        self,
+        title: &str,
+        text: &str,
+        thumb_url: Option<&str>,
+    ) -> PostRequestBuilder {
         PostRequestBuilder {
             props: self.props.map_or_else(
                 || {
@@ -132,6 +141,7 @@ impl PostRequestBuilder {
                             text: text.into(),
                             fallback: text.into(),
                             color: None,
+                            thumb_url: thumb_url.map(Into::into),
                         }],
                     })
                 },
@@ -142,6 +152,7 @@ impl PostRequestBuilder {
                         text: text.into(),
                         fallback: text.into(),
                         color: None,
+                        thumb_url: thumb_url.map(Into::into),
                     });
                     Some(PostProps { attachments })
                 },
@@ -254,7 +265,7 @@ pub async fn send_notification(
     let channel = get_dm_channel(&body.user_email, &body.host, &body.bot_token).await?;
 
     let res = PostRequestBuilder::new(&body.host)
-        .with_attachment(&body.title, &body.body)
+        .with_attachment(&body.title, &body.body, body.thumbnail.as_deref()) // deref keeps Option
         .using_bot(&body.bot_token)
         .to_channel(&channel)
         .with_message("")
