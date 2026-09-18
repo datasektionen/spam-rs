@@ -6,6 +6,17 @@ A system for sending mail via the datasektionen AWS SES service.
 
 `[WIP]`
 
+### `POST /api/mattermost/notify/`
+Sends a formatted message via DM to a user on Mattermost.
+
+| Field      | Required | Description                                                                                                               |
+|------------|----------|---------------------------------------------------------------------------------------------------------------------------|
+| host       | ✅        | The host URL of the Mattermost server. For example, `https://mattermost.datasektionen.se`                                 |
+| user_email | ✅        | The email address of the receiving user. For example, `turetek@kth.se` (This is used to identify the correct DM channel.) | 
+| bot_token  | ✅        | Token for the bot that should send the message.                                                                           |
+| title      | ✅        | The title of the message.                                                                                                 |
+| body       | ✅        | The body of the message.                                                                                                  |
+
 ## Legacy
 
 ### API
