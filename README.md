@@ -9,15 +9,17 @@ A system for sending mail via the datasektionen AWS SES service.
 ### `POST /api/mattermost/notify/`
 Sends a formatted message via DM to a user on Mattermost.
 
-| Field      | Required | Description                                                                                                               |
-|------------|----------|---------------------------------------------------------------------------------------------------------------------------|
-| host       | ✅        | The host URL of the Mattermost server. For example, `https://mattermost.datasektionen.se`                                 |
-| user_email | ✅        | The email address of the receiving user. For example, `turetek@kth.se` (This is used to identify the correct DM channel.) | 
-| bot_token  | ✅        | Token for the bot that should send the message.                                                                           |
-| title      | ✅        | The title of the message.                                                                                                 |
-| body       | ✅        | The body of the message.                                                                                                  |
-| key        | ✅        | The secret key for spam-rs.                                                                                               |
-| thumbnail  |          | URL to an optional thumbnail image. Cannot be an SVG (despite Mattermost's own documentation).                            |
+| Field       | Required | Description                                                                                                               |
+|-------------|----------|---------------------------------------------------------------------------------------------------------------------------|
+| host        | ✅        | The host URL of the Mattermost server. For example, `https://mattermost.datasektionen.se`                                 |
+| user_email  | ✅        | The email address of the receiving user. For example, `turetek@kth.se` (This is used to identify the correct DM channel.) | 
+| bot_token   | ✅        | Token for the bot that should send the message.                                                                           |
+| title       | ✅        | The title of the message.                                                                                                 |
+| body        | ✅        | The body of the message.                                                                                                  |
+| key         | ✅        | The secret key for spam-rs.                                                                                               |
+| thumbnail   |          | URL to an optional thumbnail image. Cannot be an SVG (despite Mattermost's own documentation).                            |
+| author_name |          | Optional author name to display in the message. For example, "Ture Teknolog".                                             |
+| author_icon |          | URL to an optional author icon.                                                                                           |
 
 ## Legacy
 

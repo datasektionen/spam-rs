@@ -33,6 +33,8 @@ pub struct NotificationRequest {
     title: String,
     body: String,
     thumbnail: Option<String>,
+    author_name: Option<String>,
+    author_icon: Option<Url>,
 }
 
 pub struct PostRequest {
@@ -63,6 +65,10 @@ struct Attachment {
     title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     thumb_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    author_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    author_icon: Option<Url>,
 }
 
 #[derive(serde::Serialize)]
@@ -131,6 +137,8 @@ impl PostRequestBuilder {
         title: &str,
         text: &str,
         thumb_url: Option<&str>,
+        author: Option<&str>,
+        author_icon: Option<&Url>,
     ) -> PostRequestBuilder {
         PostRequestBuilder {
             props: self.props.map_or_else(
@@ -142,6 +150,8 @@ impl PostRequestBuilder {
                             fallback: text.into(),
                             color: None,
                             thumb_url: thumb_url.map(Into::into),
+                            author_name: author.map(Into::into),
+                            author_icon: author_icon.cloned(),
                         }],
                     })
                 },
@@ -153,6 +163,8 @@ impl PostRequestBuilder {
                         fallback: text.into(),
                         color: None,
                         thumb_url: thumb_url.map(Into::into),
+                        author_name: author.map(Into::into),
+                        author_icon: author_icon.cloned(),
                     });
                     Some(PostProps { attachments })
                 },
@@ -265,7 +277,13 @@ pub async fn send_notification(
     let channel = get_dm_channel(&body.user_email, &body.host, &body.bot_token).await?;
 
     let res = PostRequestBuilder::new(&body.host)
-        .with_attachment(&body.title, &body.body, body.thumbnail.as_deref()) // deref keeps Option
+        .with_attachment(
+            &body.title,
+            &body.body,
+            body.thumbnail.as_deref(),
+            body.author_name.as_deref(),
+            body.author_icon.as_ref(),
+        ) // deref keeps Option
         .using_bot(&body.bot_token)
         .to_channel(&channel)
         .with_message("")
