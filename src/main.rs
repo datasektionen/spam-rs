@@ -304,7 +304,12 @@ async fn main() -> std::io::Result<()> {
                 scope("/api")
                     .service(ping)
                     .service(scope("/legacy").service(send_mail_legacy))
-                    .service(scope("/mattermost").service(mattermost::send_notification)),
+                    .service(
+                        scope("/mattermost")
+                            .service(mattermost::send_notification)
+                            .service(mattermost::send_to_channel)
+                            .service(mattermost::send_dm),
+                    ),
             )
     })
     .bind((address, port))?

@@ -37,6 +37,24 @@ pub struct NotificationRequest {
     author_icon: Option<Url>,
 }
 
+#[derive(serde::Deserialize, Clone)]
+pub struct ChannelPostRequest {
+    host: Url,
+    bot_token: String,
+    key: String,
+    body: String,
+    channel: String,
+}
+
+#[derive(serde::Deserialize, Clone)]
+pub struct DirecetMessageRequest {
+    host: Url,
+    bot_token: String,
+    key: String,
+    body: String,
+    user_email: String,
+}
+
 pub struct PostRequest {
     endpoint: Url,
     channel_id: String,
@@ -262,6 +280,9 @@ async fn get_dm_channel(user_email: &str, host: &Url, bot_token: &str) -> Result
     Ok(res.id)
 }
 
+/// Sends a formatted "Notification" to a user's DM channel.
+///
+/// Will format the title/body as a message attachment (will render as an outlined box)
 #[post("/notify")]
 pub async fn send_notification(
     body: web::Json<NotificationRequest>,
@@ -290,6 +311,70 @@ pub async fn send_notification(
         .build()?
         .send()
         .await?;
+    if res.status().is_success() {
+        Ok(HttpResponse::Ok().body("Post sent successfully"))
+    } else {
+        Err(Error::MattermostSend(format!(
+            "Failed to send post: {}",
+            res.status()
+        )))
+    }
+}
+
+/// Send a post to a channel using its ID.
+///
+/// This can be any channel (including a DM channel) if you have the ID.
+#[post("/channel")]
+pub async fn send_to_channel(body: web::Json<ChannelPostRequest>) -> Result<HttpResponse, Error> {
+    hive_authenticate_request(&body.key).await?;
+
+    let allowed =
+        env::var(ALLOWED_HOSTS_ENV).map_err(|_| Error::EnvVarMissing(ALLOWED_HOSTS_ENV.into()))?;
+    if !host_allowed(&body.host, &allowed) {
+        return Err(Error::HostNotAllowed(body.host.to_string()));
+    }
+
+    let res = PostRequestBuilder::new(&body.host)
+        .using_bot(&body.bot_token)
+        .with_message(&body.body)
+        .to_channel(&body.channel)
+        .build()?
+        .send()
+        .await?;
+
+    if res.status().is_success() {
+        Ok(HttpResponse::Ok().body("Post sent successfully"))
+    } else {
+        Err(Error::MattermostSend(format!(
+            "Failed to send post: {}",
+            res.status()
+        )))
+    }
+}
+
+/// Send a post to a DM channel given a user email.
+///
+/// Will find/create the necessary channel, so no channel id needs to be passed.
+#[post("/dm")]
+pub async fn send_dm(body: web::Json<DirecetMessageRequest>) -> Result<HttpResponse, Error> {
+    hive_authenticate_request(&body.key).await?;
+
+    let allowed =
+        env::var(ALLOWED_HOSTS_ENV).map_err(|_| Error::EnvVarMissing(ALLOWED_HOSTS_ENV.into()))?;
+    if !host_allowed(&body.host, &allowed) {
+        return Err(Error::HostNotAllowed(body.host.to_string()));
+    }
+
+    let dm_channel = get_dm_channel(&body.user_email, &body.host, &body.bot_token).await?;
+
+    let res = PostRequestBuilder::new(&body.host)
+        .using_bot(&body.bot_token)
+        .to_channel(&dm_channel)
+        .with_message(&body.body)
+        .build()?
+        .send()
+        .await?;
+
     if res.status().is_success() {
         Ok(HttpResponse::Ok().body("Post sent successfully"))
     } else {
