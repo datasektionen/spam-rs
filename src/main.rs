@@ -18,6 +18,7 @@ use std::{env, fs};
 
 mod error;
 mod legacy;
+pub mod mattermost;
 
 use error::Error;
 use legacy::email::{AddressFieldLegacy, EmailRequestLegacy, EmailTemplateTypeLegacy};
@@ -80,7 +81,7 @@ impl Client {
         let domain = from
             .trim()
             .split('@')
-            .last()
+            .next_back()
             .ok_or(Error::InvalidEmailDomain("missing domain".to_string()))?;
 
         match VerifiedDomains::try_from(domain.to_string()) {
@@ -286,7 +287,7 @@ async fn main() -> std::io::Result<()> {
     let mut client = Client::new().await;
     client
         .load_templates()
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
     let client = web::Data::new(client);
 
     info!("Listening on {}:{}", address, port);
@@ -302,7 +303,13 @@ async fn main() -> std::io::Result<()> {
             .service(
                 scope("/api")
                     .service(ping)
-                    .service(scope("/legacy").service(send_mail_legacy)),
+                    .service(scope("/legacy").service(send_mail_legacy))
+                    .service(
+                        scope("/mattermost")
+                            .service(mattermost::send_notification)
+                            .service(mattermost::send_to_channel)
+                            .service(mattermost::send_dm),
+                    ),
             )
     })
     .bind((address, port))?
@@ -310,24 +317,13 @@ async fn main() -> std::io::Result<()> {
     .await
 }
 
-#[post("/sendmail")]
-async fn send_mail_legacy(
-    ses: web::Data<Client>,
-    body: Either<web::Json<EmailRequestLegacy>, web::Form<EmailRequestLegacy>>,
-) -> Result<HttpResponse, Error> {
-    let body = match body {
-        Either::Left(json) => json.into_inner(),
-        Either::Right(form) => form.into_inner(),
-    };
-
-    debug!("received email request: {:?}", body);
-
+pub async fn hive_authenticate_request(key: &str) -> Result<(), Error> {
     let hive_url = env::var("HIVE_URL")
         .map_err(|e| Error::EnvVarMissing(format!("HIVE_URL missing: {}", e)))?;
 
     let client = reqwest::Client::new();
     let res = client
-        .get(format!("{}/token/{}/permission/send", hive_url, &body.key))
+        .get(format!("{}/token/{}/permission/send", hive_url, key))
         .bearer_auth(
             env::var("HIVE_SECRET").map_err(|_| Error::EnvVarMissing("HIVE_SECRET".to_string()))?,
         )
@@ -343,13 +339,30 @@ async fn send_mail_legacy(
         .parse::<bool>()
         .map_err(|e| Error::ApiKeyLookup(format!("Key parse failed: {}", e)))?;
 
-    if !is_auth {
-        return Err(Error::ApiKeyInvalid);
+    if is_auth {
+        Ok(())
+    } else {
+        Err(Error::ApiKeyInvalid)
     }
+}
+
+#[post("/sendmail")]
+async fn send_mail_legacy(
+    ses: web::Data<Client>,
+    body: Either<web::Json<EmailRequestLegacy>, web::Form<EmailRequestLegacy>>,
+) -> Result<HttpResponse, Error> {
+    let body = match body {
+        Either::Left(json) => json.into_inner(),
+        Either::Right(form) => form.into_inner(),
+    };
+
+    hive_authenticate_request(&body.key).await?;
+
+    debug!("received email request: {:?}", body);
 
     ses.send_email_legacy(body)
         .await
-        .map(|message_id| HttpResponse::Ok().body(format!("{}", message_id)))
+        .map(|message_id| HttpResponse::Ok().body(message_id.to_string()))
 }
 
 #[get("/ping")]

@@ -6,6 +6,48 @@ A system for sending mail via the datasektionen AWS SES service.
 
 `[WIP]`
 
+### Mattermost
+
+#### `POST /api/mattermost/channel/`
+
+Sends a post to a Mattermost channel given its ID. Unlike the `notify/` endpoint to predetermined formatting will be made.
+
+| Field      | Required | Description                                                                               |
+| ---------- | -------- | ----------------------------------------------------------------------------------------- |
+| host       | ✅       | The host URL of the Mattermost server. For example, `https://mattermost.datasektionen.se` |
+| bot_token  | ✅       | Token for the bot that should send the message.                                           |
+| key        | ✅       | The secret key for spam-rs.                                                               |
+| body       | ✅       | The body text of the message                                                              |
+| channel_id | ✅       | The ID of the channel to send the message to.                                             |
+
+#### `POST /api/mattermost/dm/`
+
+Sends a direct message to a user given their email address. The channel will be created if necessary.
+
+| Field      | Required | Description                                                                                                               |
+| ---------- | -------- | ------------------------------------------------------------------------------------------------------------------------- |
+| host       | ✅       | The host URL of the Mattermost server. For example, `https://mattermost.datasektionen.se`                                 |
+| user_email | ✅       | The email address of the receiving user. For example, `turetek@kth.se` (This is used to identify the correct DM channel.) |
+| bot_token  | ✅       | Token for the bot that should send the message.                                                                           |
+| key        | ✅       | The secret key for spam-rs.                                                                                               |
+| body       | ✅       | The body text of the message                                                                                              |
+
+#### `POST /api/mattermost/notify/`
+
+Sends a formatted message via DM to a user on Mattermost.
+
+| Field       | Required | Description                                                                                                               |
+| ----------- | -------- | ------------------------------------------------------------------------------------------------------------------------- |
+| host        | ✅       | The host URL of the Mattermost server. For example, `https://mattermost.datasektionen.se`                                 |
+| user_email  | ✅       | The email address of the receiving user. For example, `turetek@kth.se` (This is used to identify the correct DM channel.) |
+| bot_token   | ✅       | Token for the bot that should send the message.                                                                           |
+| title       | ✅       | The title of the message.                                                                                                 |
+| body        | ✅       | The body of the message.                                                                                                  |
+| key         | ✅       | The secret key for spam-rs.                                                                                               |
+| thumbnail   |          | URL to an optional thumbnail image. Cannot be an SVG (despite Mattermost's own documentation).                            |
+| author_name |          | Optional author name to display in the message. For example, "Ture Teknolog".                                             |
+| author_icon |          | URL to an optional author icon.                                                                                           |
+
 ## Legacy
 
 ### API
@@ -92,6 +134,12 @@ An example of a valid JSON request:
 #### `GET /api/legacy/ping`
 
 Returns "I'm alive!" if the server is running.
+
+# Environment variables
+
+| Name                       | Description                                   |
+| -------------------------- | --------------------------------------------- |
+| `MATTERMOST_ALLOWED_HOSTS` | Allowed Mattermost hosts to send messages to. |
 
 # Spam
 
