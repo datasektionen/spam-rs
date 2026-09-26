@@ -16,6 +16,12 @@ pub struct MattermostChannel {
 }
 
 const ALLOWED_HOSTS_ENV: &str = "MATTERMOST_ALLOWED_HOSTS";
+const SSO_URL_ENV: &str = "SSO_HOST_URL";
+
+#[derive(Debug)]
+enum UserIdentifier {
+    Email(String),
+}
 
 fn host_allowed(host: &Url, allowed: &str) -> bool {
     allowed
@@ -27,7 +33,9 @@ fn host_allowed(host: &Url, allowed: &str) -> bool {
 #[derive(serde::Deserialize, Clone)]
 pub struct NotificationRequest {
     host: Url,
-    user_email: String,
+
+    // Either a username or email can be passed
+    username: String,
     bot_token: String,
     key: String,
     title: String,
@@ -47,12 +55,12 @@ pub struct ChannelPostRequest {
 }
 
 #[derive(serde::Deserialize, Clone)]
-pub struct DirecetMessageRequest {
+pub struct DirectMessageRequest {
     host: Url,
     bot_token: String,
     key: String,
     body: String,
-    user_email: String,
+    username: String,
 }
 
 pub struct PostRequest {
@@ -123,6 +131,12 @@ pub struct PostRequestBuilder {
     bot_token: Option<String>,
     message: Option<String>,
     props: Option<PostProps>,
+}
+
+#[derive(serde::Deserialize)]
+// The response format from SSO's /api/users/
+pub struct SSOUser {
+    email: String,
 }
 
 impl PostRequestBuilder {
@@ -228,7 +242,32 @@ impl MattermostClient {
     }
 }
 
-async fn get_dm_channel(user_email: &str, host: &Url, bot_token: &str) -> Result<String, Error> {
+async fn sso_fetch_email(username: &str) -> Result<String, Error> {
+    let url = env::var(SSO_URL_ENV)
+        .map_err(|_| Error::EnvVarMissing(SSO_URL_ENV.to_string()))
+        .map(|s| Url::parse(&s))?
+        .map_err(|e| Error::InvalidAddress(e.to_string()))
+        // https://github.com/datasektionen/sso
+        .map(|url| url.join(format!("/api/users?u={}&format=single", username).as_str()))?
+        .map_err(|e| Error::InvalidAddress(e.to_string()))?;
+
+    let user = reqwest::get(url)
+        .await
+        .map_err(|e| Error::MattermostSend(e.to_string()))?
+        .json::<SSOUser>()
+        .await
+        .map_err(|e| Error::Deserialization(e.to_string()))?;
+
+    Ok(user.email)
+}
+
+async fn get_dm_channel(
+    user: UserIdentifier,
+    host: &Url,
+    bot_token: &str,
+) -> Result<String, Error> {
+    let UserIdentifier::Email(user_email) = user;
+
     let client = reqwest::Client::new();
     let user = client
         .get(
@@ -289,13 +328,15 @@ pub async fn send_notification(
 ) -> Result<HttpResponse, Error> {
     hive_authenticate_request(&body.key).await?;
 
+    let email = sso_fetch_email(&body.username).await?;
+
     let allowed = env::var(ALLOWED_HOSTS_ENV)
         .map_err(|_| Error::EnvVarMissing(ALLOWED_HOSTS_ENV.to_string()))?;
     if !host_allowed(&body.host, &allowed) {
         return Err(Error::HostNotAllowed(body.host.to_string()));
     }
 
-    let channel = get_dm_channel(&body.user_email, &body.host, &body.bot_token).await?;
+    let channel = get_dm_channel(UserIdentifier::Email(email), &body.host, &body.bot_token).await?;
 
     let res = PostRequestBuilder::new(&body.host)
         .with_attachment(
@@ -315,6 +356,7 @@ pub async fn send_notification(
         Ok(HttpResponse::Ok().body("Post sent successfully"))
     } else {
         Err(Error::MattermostSend(format!(
+            // Used to identify a user
             "Failed to send post: {}",
             res.status()
         )))
@@ -356,8 +398,10 @@ pub async fn send_to_channel(body: web::Json<ChannelPostRequest>) -> Result<Http
 ///
 /// Will find/create the necessary channel, so no channel id needs to be passed.
 #[post("/dm")]
-pub async fn send_dm(body: web::Json<DirecetMessageRequest>) -> Result<HttpResponse, Error> {
+pub async fn send_dm(body: web::Json<DirectMessageRequest>) -> Result<HttpResponse, Error> {
     hive_authenticate_request(&body.key).await?;
+
+    let email = sso_fetch_email(&body.username).await?;
 
     let allowed =
         env::var(ALLOWED_HOSTS_ENV).map_err(|_| Error::EnvVarMissing(ALLOWED_HOSTS_ENV.into()))?;
@@ -365,7 +409,8 @@ pub async fn send_dm(body: web::Json<DirecetMessageRequest>) -> Result<HttpRespo
         return Err(Error::HostNotAllowed(body.host.to_string()));
     }
 
-    let dm_channel = get_dm_channel(&body.user_email, &body.host, &body.bot_token).await?;
+    let dm_channel =
+        get_dm_channel(UserIdentifier::Email(email), &body.host, &body.bot_token).await?;
 
     let res = PostRequestBuilder::new(&body.host)
         .using_bot(&body.bot_token)
